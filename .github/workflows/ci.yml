@@ -47,6 +47,66 @@ jobs:
         # the 3.2 system bash explicitly — that is what most macOS users have.
         run: /bin/bash ./tests/run.sh
 
+  windows:
+    name: tests (windows, ${{ matrix.shell }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # `powershell` is Windows PowerShell 5.1 — what ships with Windows and
+        # what most users will actually run. `pwsh` is PowerShell 7.
+        shell: [powershell, pwsh]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show environment
+        shell: ${{ matrix.shell }}
+        run: $PSVersionTable
+      - name: Run tests
+        shell: ${{ matrix.shell }}
+        run: .\tests\run.ps1
+
+  windows-lint:
+    name: PSScriptAnalyzer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PSScriptAnalyzer
+        shell: powershell
+        run: Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
+      - name: Analyze
+        shell: powershell
+        run: |
+          $r = Invoke-ScriptAnalyzer -Path .\keepwarm.ps1, .\tests\run.ps1 -Severity Error,Warning
+          $r | Format-Table -AutoSize
+          # Fail on errors; warnings are reported but not gating.
+          if ($r | Where-Object Severity -eq 'Error') { exit 1 }
+
+  windows-task-smoke:
+    name: Task Scheduler install/uninstall
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Register, verify, unregister
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # install refuses to run without a resolvable claude binary, so give
+          # it a stub — this step is about Task Scheduler, not about pinging.
+          $stub = Join-Path $env:RUNNER_TEMP 'claude.cmd'
+          '@echo off' | Set-Content $stub -Encoding ASCII
+          $env:KEEPWARM_CLAUDE_BIN = $stub
+
+          .\keepwarm.ps1 install
+          $t = Get-ScheduledTask -TaskName 'claude-keepwarm' -ErrorAction SilentlyContinue
+          if (-not $t) { throw 'task was not registered' }
+          Write-Host "registered: $($t.TaskName) [$($t.State)]"
+
+          .\keepwarm.ps1 uninstall
+          if (Get-ScheduledTask -TaskName 'claude-keepwarm' -ErrorAction SilentlyContinue) {
+            throw 'task was not removed'
+          }
+          Write-Host 'unregistered cleanly'
+
   timezones:
     name: half-hour timezone
     runs-on: ubuntu-latest

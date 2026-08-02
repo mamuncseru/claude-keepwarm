@@ -42,7 +42,11 @@ the plan's natural ceiling of 24/5 ≈ 4.8 — regardless of when you sit down.
 
 ## Install
 
-Requires bash 3.2+, `cron`, and a logged-in [Claude Code](https://claude.com/claude-code) CLI.
+Needs a logged-in [Claude Code](https://claude.com/claude-code) CLI.
+
+### macOS / Linux
+
+Requires bash 3.2+ and `cron`.
 
 ```sh
 git clone https://github.com/mamuncseru/claude-keepwarm.git
@@ -53,11 +57,42 @@ cd claude-keepwarm
 ./keepwarm doctor      # confirm it's actually running
 ```
 
-The cron job runs **hourly** but only calls Claude when the window has actually
-expired. That makes it self-correcting: if the machine sleeps or cron misses a
-run, the next tick catches up instead of drifting out of phase.
+### Windows
 
-To remove it: `./keepwarm uninstall`.
+Requires Windows PowerShell 5.1 (ships with Windows 10/11) or PowerShell 7.
+Uses Task Scheduler instead of cron; same commands, same config, same state
+file format.
+
+```powershell
+git clone https://github.com/mamuncseru/claude-keepwarm.git
+cd claude-keepwarm
+
+.\keepwarm.ps1 install    # hourly scheduled task
+.\keepwarm.ps1 ping       # open the first window
+.\keepwarm.ps1 doctor     # confirm it's actually running
+```
+
+If PowerShell blocks the script, either unblock it once
+(`Unblock-File .\keepwarm.ps1`) or run via
+`powershell -ExecutionPolicy Bypass -File .\keepwarm.ps1 install`. The task it
+registers always passes `-ExecutionPolicy Bypass`, so scheduled runs are
+unaffected either way.
+
+> **Use the native port, not WSL.** WSL2 shuts its VM down once your last shell
+> exits, so `cron` inside WSL simply won't fire overnight — which is exactly
+> when you need it. Making WSL reliable means having Windows Task Scheduler
+> wake it, at which point you may as well use the native port and skip the
+> extra moving part.
+
+---
+
+Both versions run **hourly** but only call Claude when the window has actually
+expired. That makes them self-correcting: if the machine sleeps or a run is
+missed, the next tick catches up instead of drifting out of phase. On Windows
+the task is registered with `StartWhenAvailable`, so a run missed during sleep
+fires as soon as the machine is back rather than waiting a full hour.
+
+To remove: `./keepwarm uninstall` or `.\keepwarm.ps1 uninstall`.
 
 ## Is it running?
 
@@ -99,20 +134,29 @@ In the log: `WAIT` means cron ran and correctly decided not to spend a ping.
 | `keepwarm ping --dry-run` | Print the exact command without calling Claude |
 | `keepwarm log [n]` | Last n log lines |
 | `keepwarm config` | Resolved settings and paths |
-| `keepwarm uninstall` | Remove the cron job |
+| `keepwarm uninstall` | Remove the cron job / scheduled task |
+
+On Windows every command is the same with `.\keepwarm.ps1` in place of
+`./keepwarm`.
 
 ## Cost
 
-One ping, measured:
+One ping, measured over three runs:
 
 ```
-input 167 + output 71 = 238 tokens   ($0.0005)
+input 167 (stable)  +  output 72–106  ≈ 240–270 tokens   ($0.0005–0.0007)
 ```
 
-At ~5 pings/day that's ~1,200 tokens/day. It stays that small because the ping
-runs with `--system-prompt` (replacing Claude Code's ~15k-token default),
-`--tools ""` (no tool schemas) and `--safe-mode` (no CLAUDE.md, skills, plugins,
-hooks or MCP). A plain `claude -p hi` costs roughly 60× more.
+At ~5 pings/day that's roughly 1,200 tokens and well under a cent. It stays that
+small because the ping runs with `--system-prompt` (replacing Claude Code's
+~15k-token default), `--tools=` (no tool schemas) and `--safe-mode` (no
+CLAUDE.md, skills, plugins, hooks or MCP). A plain `claude -p hi` costs roughly
+60× more.
+
+> The empty value is written `--tools=` rather than `--tools ""` on purpose:
+> PowerShell 5.1 silently drops empty-string arguments to native executables, so
+> the quoted form would break the Windows port. The `=` form behaves identically
+> on both.
 
 ## Configuration
 
@@ -169,21 +213,35 @@ behaviour, but if Anthropic anchors differently, pings will occasionally land
 early — which shows up as a `LIMITED` line and a retry, not as breakage. Raise
 `SLACK_MINUTES` if you see those repeatedly.
 
-**Windows-native isn't supported.** Use WSL, where it works normally.
+**Boundaries are per-machine.** The window is account-wide, but keepwarm's
+state file is local. Running it on two machines means two schedulers pinging
+independently — harmless (the second one just sees a live window and waits),
+but pick one machine that's reliably awake.
 
 ## Development
 
 ```sh
-./tests/run.sh          # 18 tests, no network, no API calls, no real crontab
+./tests/run.sh          # 18 tests — no network, no API calls, no real crontab
 ./tests/run.sh lock     # filter by name
 shellcheck -s bash keepwarm tests/run.sh
 ```
 
-Tests run in a throwaway sandbox with a PATH shim providing a stub `claude` and
-a fake `crontab`, so `install`/`uninstall` are exercised without touching your
-real one. CI runs them on Linux and macOS, under macOS's bash 3.2, and across
-half-hour timezones (`Asia/Kolkata`, `Asia/Kathmandu`) that break any
-implementation flooring to the hour with `epoch % 3600`.
+```powershell
+.\tests\run.ps1         # 15 tests, same coverage on the Windows port
+```
+
+Tests run in a throwaway sandbox with a stub `claude` and (on Unix) a fake
+`crontab`, so `install`/`uninstall` are exercised without touching your real
+one. CI covers:
+
+| Job | What it catches |
+| --- | --- |
+| Linux + macOS | GNU vs BSD `date` divergence |
+| macOS `/bin/bash` | bash 3.2 syntax (no arrays, no `${var,,}`) |
+| Windows PowerShell 5.1 + 7 | the native port on the version that ships with Windows |
+| Task Scheduler smoke test | real `install`/`uninstall` round trip |
+| `Asia/Kolkata`, `Asia/Kathmandu` | half-hour offsets, which break any `epoch % 3600` hour-flooring |
+| shellcheck + PSScriptAnalyzer | lint on both ports |
 
 ## A note on responsible use
 

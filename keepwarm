@@ -20,7 +20,7 @@
 #
 set -uo pipefail
 
-KEEPWARM_VERSION="1.1.0"
+KEEPWARM_VERSION="1.2.0"
 
 # Resolve our own directory, following symlinks so `ln -s keepwarm ~/bin/`
 # works. readlink -f is GNU-only, so walk the links manually.
@@ -279,7 +279,10 @@ do_ping_once() {
     local out rc
     # --safe-mode          no CLAUDE.md, skills, plugins, hooks, MCP (auth still works)
     # --system-prompt      replaces Claude Code's ~15k-token default system prompt
-    # --tools ""           no tool schemas in the request
+    # --tools=             no tool schemas in the request. The `=` form is
+    #                      deliberate: PowerShell 5.1 drops empty-string args
+    #                      to native exes, so `--tools ""` breaks the Windows
+    #                      port. This form behaves identically on both.
     # --no-session-...     do not litter ~/.claude/projects with keepalive sessions
     out="$(cd "$STATE_DIR" && "$CLAUDE_BIN" -p "$PING_PROMPT" \
         --model "$MODEL" \
@@ -288,7 +291,7 @@ do_ping_once() {
         --strict-mcp-config \
         --no-session-persistence \
         --system-prompt "$PING_SYSTEM_PROMPT" \
-        --tools "" \
+        --tools= \
         --output-format json 2>&1)"
     rc=$?
 
@@ -413,7 +416,7 @@ cmd_ping() {
         say "would run:"
         say "  ${CLAUDE_BIN:-<claude>} -p '$PING_PROMPT' --model $MODEL --safe-mode \\"
         say "    --disable-slash-commands --strict-mcp-config --no-session-persistence \\"
-        say "    --system-prompt '$PING_SYSTEM_PROMPT' --tools '' --output-format json"
+        say "    --system-prompt '$PING_SYSTEM_PROMPT' --tools= --output-format json"
         return 0
     fi
 

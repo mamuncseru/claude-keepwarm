@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-08-02
+
+### Added
+- **Windows support** via a native PowerShell port (`keepwarm.ps1`) using Task
+  Scheduler instead of cron. Same commands, same `config.env`, same state file
+  format, so moving between WSL and native Windows keeps your window. The task
+  is registered with `StartWhenAvailable`, the Windows analogue of the
+  self-correcting hourly tick: a run missed during sleep fires on wake rather
+  than waiting a full hour.
+- Windows test suite (`tests/run.ps1`), plus CI jobs for Windows PowerShell 5.1
+  and PowerShell 7, PSScriptAnalyzer, and a real Task Scheduler
+  install/uninstall smoke test.
+
+### Changed
+- The ping now passes `--tools=` instead of `--tools ""`. PowerShell 5.1
+  silently drops empty-string arguments to native executables, so the quoted
+  form would have broken the Windows port. Verified equivalent on Unix.
+
 ## [1.1.0] — 2026-08-02
 
 First public release.
@@ -45,4 +63,5 @@ First public release.
   rather than `epoch % 3600`, which was wrong in half-hour timezones such as
   `Asia/Kolkata` and `Asia/Kathmandu`.
 
+[1.2.0]: https://github.com/mamuncseru/claude-keepwarm/releases/tag/v1.2.0
 [1.1.0]: https://github.com/mamuncseru/claude-keepwarm/releases/tag/v1.1.0

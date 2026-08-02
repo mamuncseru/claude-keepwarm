@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck --version
+      - run: shellcheck -s bash keepwarm tests/run.sh
+
+  test:
+    name: tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu exercises the GNU date path, macos the BSD one.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show environment
+        run: |
+          bash --version | head -1
+          date --version 2>/dev/null | head -1 || echo "BSD date"
+      - name: Run tests
+        run: ./tests/run.sh
+
+  bash32:
+    name: bash 3.2 (macOS system bash)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm we are really on bash 3.2
+        run: /bin/bash -c 'echo "$BASH_VERSION"'
+      - name: Run tests under /bin/bash
+        # `env bash` on a runner can pick up a newer Homebrew bash, so invoke
+        # the 3.2 system bash explicitly — that is what most macOS users have.
+        run: /bin/bash ./tests/run.sh
+
+  timezones:
+    name: half-hour timezone
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Kolkata is UTC+5:30 and Kathmandu UTC+5:45 — these break any
+        # implementation that floors to the hour with epoch modulo 3600.
+        tz: [UTC, Asia/Kolkata, Asia/Kathmandu, America/New_York]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests in ${{ matrix.tz }}
+        env:
+          TZ: ${{ matrix.tz }}
+        run: ./tests/run.sh

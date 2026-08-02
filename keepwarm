@@ -1,0 +1,668 @@
+#!/usr/bin/env bash
+#
+# keepwarm — keep Claude Code's 5-hour usage window rolling.
+#
+# Claude Code's usage window starts at the top of the hour containing your
+# FIRST message and lasts 5 hours. It does not tick while you are away. Idle
+# all night, start at 09:00, exhaust the quota by 10:00, and you wait until
+# 14:00 — having gained nothing from the idle hours.
+#
+# keepwarm sends one tiny prompt just after each window expires, so windows
+# tile back-to-back around the clock. You do not get more quota per window;
+# you get more windows per day.
+#
+# https://github.com/mamuncseru/claude-keepwarm
+# MIT licensed.
+#
+# Portability: targets bash 3.2 (macOS default) and both GNU and BSD
+# userlands. No arrays, no ${var,,}, no mapfile, no flock, no `find -quit`,
+# no `date -d`. See the compat layer below.
+#
+set -uo pipefail
+
+KEEPWARM_VERSION="1.1.0"
+
+# Resolve our own directory, following symlinks so `ln -s keepwarm ~/bin/`
+# works. readlink -f is GNU-only, so walk the links manually.
+_self="${BASH_SOURCE[0]}"
+while [ -L "$_self" ]; do
+    _dir="$(cd -P "$(dirname "$_self")" && pwd)"
+    _self="$(readlink "$_self")"
+    case "$_self" in /*) ;; *) _self="$_dir/$_self" ;; esac
+done
+HERE="$(cd -P "$(dirname "$_self")" && pwd)"
+unset _self _dir
+
+CRON_MARKER="# claude-keepwarm"
+
+# ---------------------------------------------------------------- defaults --
+# Every value here can be overridden in config.env, and then again by a
+# KEEPWARM_<NAME> environment variable (which wins). The env layer is what
+# makes the test suite possible.
+
+WINDOW_HOURS=5          # length of the usage window
+SLACK_MINUTES=2         # wait this long past the boundary before pinging
+MODEL="haiku"           # cheapest model opens the window just as well
+CRON_MINUTE=2           # minute of the hour the cron job fires on
+LOG_RETENTION_DAYS=30
+
+PING_PROMPT="ping"
+PING_SYSTEM_PROMPT="You are a keepalive probe. Reply with exactly: ok"
+PING_ATTEMPTS=3         # transient local failures are retried in-process
+PING_RETRY_DELAY=20     # seconds between attempts
+
+SKIP_IF_RECENTLY_ACTIVE=1
+ACTIVITY_DIR="$HOME/.claude/projects"
+
+CLAUDE_BIN=""           # empty = auto-detect
+
+HOME_DIR="$HERE"        # where state/, logs/ and config.env live
+
+# config.env first...
+[ -n "${KEEPWARM_HOME:-}" ] && HOME_DIR="$KEEPWARM_HOME"
+CONFIG_FILE="${KEEPWARM_CONFIG:-$HOME_DIR/config.env}"
+if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck disable=SC1090,SC1091
+    . "$CONFIG_FILE"
+fi
+
+# ...then the environment wins over it.
+for _v in WINDOW_HOURS SLACK_MINUTES MODEL CRON_MINUTE LOG_RETENTION_DAYS \
+          PING_PROMPT PING_SYSTEM_PROMPT PING_ATTEMPTS PING_RETRY_DELAY \
+          SKIP_IF_RECENTLY_ACTIVE ACTIVITY_DIR CLAUDE_BIN HOME_DIR; do
+    _env="KEEPWARM_$_v"
+    if [ -n "${!_env:-}" ]; then eval "$_v=\${$_env}"; fi
+done
+unset _v _env
+
+STATE_DIR="$HOME_DIR/state"
+LOG_DIR="$HOME_DIR/logs"
+STATE_FILE="$STATE_DIR/window.env"
+LOG_FILE="$LOG_DIR/keepwarm.log"
+LOCK_DIR="$STATE_DIR/keepwarm.lock.d"
+REF_FILE="$STATE_DIR/.boundary-ref"
+
+WINDOW_SECONDS=$(( WINDOW_HOURS * 3600 ))
+SLACK_SECONDS=$(( SLACK_MINUTES * 60 ))
+
+mkdir -p "$STATE_DIR" "$LOG_DIR"
+
+# ------------------------------------------------------------ compat layer --
+# GNU coreutils and BSD/macOS userland disagree on almost every date flag.
+# Detect once, then route every date operation through these three helpers.
+# Everything else in the script is POSIX-portable.
+
+if [ "$(date -u -d '@0' '+%Y' 2>/dev/null)" = "1970" ]; then
+    DATE_FLAVOR="gnu"
+elif [ "$(date -u -r 0 '+%Y' 2>/dev/null)" = "1970" ]; then
+    DATE_FLAVOR="bsd"
+else
+    printf 'keepwarm: unsupported date(1); need GNU or BSD date\n' >&2
+    exit 1
+fi
+
+# d_fmt <epoch> <strftime-format>
+d_fmt() {
+    if [ "$DATE_FLAVOR" = "gnu" ]; then date -d "@$1" "$2"; else date -r "$1" "$2"; fi
+}
+
+# d_parse "YYYY-MM-DD HH:MM:SS" -> epoch (local time)
+d_parse() {
+    if [ "$DATE_FLAVOR" = "gnu" ]; then
+        date -d "$1" '+%s'
+    else
+        date -j -f '%Y-%m-%d %H:%M:%S' "$1" '+%s'
+    fi
+}
+
+# d_days_ago <n> -> YYYY-MM-DD
+d_days_ago() {
+    if [ "$DATE_FLAVOR" = "gnu" ]; then
+        date -d "$1 days ago" '+%Y-%m-%d'
+    else
+        date -v-"$1"d '+%Y-%m-%d'
+    fi
+}
+
+now_epoch() { date '+%s'; }
+
+# --------------------------------------------------------------- utilities --
+
+log() {
+    printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$*" >>"$LOG_FILE"
+}
+
+say() { printf '%s\n' "$*" >&2; }
+
+die() { printf 'keepwarm: %s\n' "$*" >&2; exit 1; }
+
+# Epoch -> "2026-08-02 14:00 EDT". Empty or zero renders as "never".
+fmt() {
+    if [ -z "${1:-}" ] || [ "$1" = "0" ]; then printf 'never'; return; fi
+    d_fmt "$1" '+%Y-%m-%d %H:%M %Z'
+}
+
+# Seconds -> "4h 23m".
+dur() {
+    local s=${1#-}
+    printf '%dh %02dm' $(( s / 3600 )) $(( (s % 3600) / 60 ))
+}
+
+# Floor an epoch to the top of its LOCAL hour. Round-tripping through a
+# formatted string keeps this correct in half-hour timezones (Asia/Kolkata,
+# Australia/Adelaide), where epoch modulo 3600 would be off by 30 minutes.
+floor_hour() { d_parse "$(d_fmt "$1" '+%Y-%m-%d %H:00:00')"; }
+
+# First cron tick at or after <epoch>. Ticks land at :CRON_MINUTE every hour.
+tick_at_or_after() {
+    local cand
+    cand="$(d_parse "$(d_fmt "$1" '+%Y-%m-%d %H'):$(printf '%02d' "$CRON_MINUTE"):00")"
+    [ "$cand" -lt "$1" ] && cand=$(( cand + 3600 ))
+    printf '%s' "$cand"
+}
+
+# Portable mutex. flock is absent on macOS; mkdir is atomic everywhere.
+# A lock whose owning process is gone is treated as stale and reclaimed.
+acquire_lock() {
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        printf '%s' "$$" >"$LOCK_DIR/pid"
+        return 0
+    fi
+    local owner=""
+    [ -f "$LOCK_DIR/pid" ] && owner="$(cat "$LOCK_DIR/pid" 2>/dev/null)"
+    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+        return 1                      # a live keepwarm holds it
+    fi
+    rm -rf "$LOCK_DIR"                # stale: owner died mid-run
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        printf '%s' "$$" >"$LOCK_DIR/pid"
+        return 0
+    fi
+    return 1
+}
+
+release_lock() { rm -rf "$LOCK_DIR" 2>/dev/null || true; }
+
+# Locate the claude binary. The VS Code / Cursor extensions bundle their own
+# copy and do not put it on PATH, which is common; the glob takes the newest
+# match so an extension update does not break the cron job.
+# Returns non-zero rather than exiting, so callers can log and carry on.
+resolve_claude_bin() {
+    if [ -n "$CLAUDE_BIN" ]; then
+        [ -x "$CLAUDE_BIN" ] && return 0
+        say "keepwarm: CLAUDE_BIN is set but not executable: $CLAUDE_BIN"
+        CLAUDE_BIN=""
+        return 1
+    fi
+
+    local candidate
+    candidate="$(command -v claude 2>/dev/null)"
+    if [ -n "$candidate" ]; then CLAUDE_BIN="$candidate"; return 0; fi
+
+    for candidate in \
+        "$HOME"/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude \
+        "$HOME"/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude \
+        "$HOME"/.cursor-server/extensions/anthropic.claude-code-*/resources/native-binary/claude \
+        "$HOME"/.cursor/extensions/anthropic.claude-code-*/resources/native-binary/claude \
+        "$HOME/.local/bin/claude" \
+        "$HOME/.claude/local/claude" \
+        "$HOME/.bun/bin/claude" \
+        /usr/local/bin/claude \
+        /opt/homebrew/bin/claude
+    do
+        [ -x "$candidate" ] && CLAUDE_BIN="$candidate"
+    done
+
+    [ -n "$CLAUDE_BIN" ] && return 0
+    say "keepwarm: could not find the claude binary. Set CLAUDE_BIN in $CONFIG_FILE"
+    return 1
+}
+
+# ------------------------------------------------------------------- state --
+
+WINDOW_START=0   # epoch of the top of the hour the current window began in
+WINDOW_END=0     # epoch the current window expires (START + WINDOW_SECONDS)
+LAST_PING=0      # epoch of the last ping attempt
+LAST_STATUS="none"
+
+load_state() {
+    if [ -f "$STATE_FILE" ]; then
+        # shellcheck disable=SC1090,SC1091
+        . "$STATE_FILE"
+    fi
+    return 0
+}
+
+save_state() {
+    cat >"$STATE_FILE" <<EOF
+WINDOW_START=$WINDOW_START
+WINDOW_END=$WINDOW_END
+LAST_PING=$LAST_PING
+LAST_STATUS=$LAST_STATUS
+EOF
+}
+
+open_window() {
+    WINDOW_START="$(floor_hour "$1")"
+    WINDOW_END=$(( WINDOW_START + WINDOW_SECONDS ))
+    save_state
+}
+
+due_at() {
+    if [ "$WINDOW_END" -eq 0 ]; then printf '0'; else printf '%s' $(( WINDOW_END + SLACK_SECONDS )); fi
+}
+
+# Did we use Claude Code ourselves after the window expired? If so the new
+# window is already open and a ping would be wasted.
+#
+# `find -newermt @epoch` is GNU-only and `-quit` does not exist on BSD, so
+# stamp a reference file with touch -t (POSIX) and compare against that.
+active_since_window_end() {
+    [ "$SKIP_IF_RECENTLY_ACTIVE" = "1" ] || return 1
+    [ "$WINDOW_END" -gt 0 ] || return 1
+    [ -d "$ACTIVITY_DIR" ] || return 1
+
+    touch -t "$(d_fmt "$WINDOW_END" '+%Y%m%d%H%M.%S')" "$REF_FILE" 2>/dev/null || return 1
+
+    local hit
+    hit="$(find "$ACTIVITY_DIR" -name '*.jsonl' -newer "$REF_FILE" -print 2>/dev/null | head -n 1)"
+    [ -n "$hit" ]
+}
+
+# -------------------------------------------------------------------- ping --
+
+# Collapse output to a single log-friendly line.
+oneline() { tr '\n\t' '  ' | tr -s ' ' | cut -c1-"${1:-1200}"; }
+
+# One ping attempt. Echoes: ok | limited | error
+do_ping_once() {
+    local out rc
+    # --safe-mode          no CLAUDE.md, skills, plugins, hooks, MCP (auth still works)
+    # --system-prompt      replaces Claude Code's ~15k-token default system prompt
+    # --tools ""           no tool schemas in the request
+    # --no-session-...     do not litter ~/.claude/projects with keepalive sessions
+    out="$(cd "$STATE_DIR" && "$CLAUDE_BIN" -p "$PING_PROMPT" \
+        --model "$MODEL" \
+        --safe-mode \
+        --disable-slash-commands \
+        --strict-mcp-config \
+        --no-session-persistence \
+        --system-prompt "$PING_SYSTEM_PROMPT" \
+        --tools "" \
+        --output-format json 2>&1)"
+    rc=$?
+
+    # An exhausted window comes back as prose with a zero exit status, so match
+    # the message as well as the exit code.
+    #
+    # Here-strings, not pipes: `grep -q` exits at the first match, which
+    # SIGPIPEs the upstream writer, and under `set -o pipefail` that turns a
+    # successful match into a non-zero pipeline status.
+    if grep -qiE 'usage limit|rate.?limit|limit reached|limit will reset|resets at' <<<"$out"; then
+        log "LIMITED  still inside a window; will retry next tick :: $(oneline 300 <<<"$out")"
+        printf 'limited'
+        return
+    fi
+
+    if [ "$rc" -ne 0 ] || grep -q '"is_error":[[:space:]]*true' <<<"$out"; then
+        # Log generously — a truncated payload hides the "result" field that
+        # explains the failure, which is exactly what you need at 03:00.
+        log "ERROR    rc=$rc :: $(oneline 1200 <<<"$out")"
+        printf 'error'
+        return
+    fi
+
+    log "OK       $(oneline 400 <<<"$out")"
+    printf 'ok'
+}
+
+# Send the keepalive, retrying transient local failures. Echoes: ok | limited | error
+# Runs inside a command substitution, so it must never call die().
+#
+# A `limited` result is NOT retried: it means the old window has not actually
+# expired, and no amount of immediate retrying changes that — the next hourly
+# tick is the right place to try again. An `error` usually is transient
+# (contended credentials file, transient network), and without an in-process
+# retry a single blip costs a whole hour of window.
+do_ping() {
+    if [ -z "$CLAUDE_BIN" ] || [ ! -x "$CLAUDE_BIN" ]; then
+        log "ERROR    claude binary not found; set CLAUDE_BIN in $CONFIG_FILE"
+        printf 'error'
+        return
+    fi
+
+    local attempt=1 status
+    while :; do
+        status="$(do_ping_once)"
+        case "$status" in
+            ok|limited) printf '%s' "$status"; return ;;
+        esac
+        if [ "$attempt" -ge "$PING_ATTEMPTS" ]; then
+            printf 'error'
+            return
+        fi
+        log "RETRY    attempt $attempt failed; retrying in ${PING_RETRY_DELAY}s"
+        sleep "$PING_RETRY_DELAY"
+        attempt=$(( attempt + 1 ))
+    done
+}
+
+prune_logs() {
+    [ -f "$LOG_FILE" ] || return 0
+    local cutoff tmp
+    cutoff="$(d_days_ago "$LOG_RETENTION_DAYS")"
+    tmp="$(mktemp "$LOG_DIR/.prune.XXXXXX")" || return 0
+    if awk -v c="$cutoff" '$1 >= c' "$LOG_FILE" >"$tmp"; then mv "$tmp" "$LOG_FILE"; else rm -f "$tmp"; fi
+}
+
+# ---------------------------------------------------------------- commands --
+
+# Cron entry point: ping only if the current window has expired.
+cmd_run() {
+    if ! acquire_lock; then
+        log "SKIP     another keepwarm run is in progress"
+        return 0
+    fi
+    trap release_lock EXIT INT TERM
+
+    load_state
+    local now due status
+    now="$(now_epoch)"
+    due="$(due_at)"
+
+    if [ "$now" -lt "$due" ]; then
+        log "WAIT     window ends $(fmt "$WINDOW_END"); $(dur $(( due - now ))) to go"
+        return 0
+    fi
+
+    if active_since_window_end; then
+        LAST_STATUS="skipped"
+        open_window "$WINDOW_END"
+        log "SKIP     you were active after $(fmt "$WINDOW_START"); window now runs to $(fmt "$WINDOW_END")"
+        return 0
+    fi
+
+    LAST_PING="$now"
+    resolve_claude_bin 2>/dev/null || true
+    status="$(do_ping)"
+    LAST_STATUS="$status"
+
+    case "$status" in
+        ok)
+            open_window "$now"
+            log "WINDOW   opened $(fmt "$WINDOW_START") -> $(fmt "$WINDOW_END")"
+            ;;
+        *)
+            # Leave WINDOW_END alone so the next hourly tick retries.
+            save_state
+            ;;
+    esac
+
+    prune_logs
+}
+
+# Force a ping now, regardless of schedule. Also re-phases your boundaries:
+# ping at 06:05 and they become 06:00 / 11:00 / 16:00 / 21:00.
+cmd_ping() {
+    load_state
+    local now status
+    now="$(now_epoch)"
+
+    if [ "${1:-}" = "--dry-run" ]; then
+        resolve_claude_bin || true
+        say "would run:"
+        say "  ${CLAUDE_BIN:-<claude>} -p '$PING_PROMPT' --model $MODEL --safe-mode \\"
+        say "    --disable-slash-commands --strict-mcp-config --no-session-persistence \\"
+        say "    --system-prompt '$PING_SYSTEM_PROMPT' --tools '' --output-format json"
+        return 0
+    fi
+
+    resolve_claude_bin || die "cannot ping without the claude binary"
+    say "pinging with model '$MODEL'..."
+    LAST_PING="$now"
+    status="$(do_ping)"
+    LAST_STATUS="$status"
+
+    case "$status" in
+        ok)
+            open_window "$now"
+            say "ok — window is now $(fmt "$WINDOW_START") -> $(fmt "$WINDOW_END")"
+            ;;
+        limited)
+            save_state
+            say "still rate limited — you are inside an existing window. Nothing lost; try later."
+            return 2
+            ;;
+        *)
+            save_state
+            say "ping failed. See: keepwarm log"
+            return 1
+            ;;
+    esac
+}
+
+cmd_status() {
+    load_state
+    resolve_claude_bin 2>/dev/null || true
+
+    local now due
+    now="$(now_epoch)"
+    due="$(due_at)"
+
+    printf 'keepwarm %s\n\n' "$KEEPWARM_VERSION"
+    printf '  claude binary   %s\n' "${CLAUDE_BIN:-NOT FOUND}"
+    printf '  model           %s\n' "$MODEL"
+    printf '  window length   %sh (+%sm slack)\n\n' "$WINDOW_HOURS" "$SLACK_MINUTES"
+
+    if [ "$WINDOW_END" -eq 0 ]; then
+        printf '  window          none recorded yet — run "keepwarm ping" to start one\n'
+    else
+        printf '  window          %s  ->  %s\n' "$(fmt "$WINDOW_START")" "$(fmt "$WINDOW_END")"
+        if [ "$now" -lt "$WINDOW_END" ]; then
+            printf '  resets in       %s\n' "$(dur $(( WINDOW_END - now )))"
+        else
+            printf '  resets in       expired %s ago\n' "$(dur $(( now - WINDOW_END )))"
+        fi
+        if [ "$now" -lt "$due" ]; then
+            printf '  next ping       %s (in %s)\n' "$(fmt "$due")" "$(dur $(( due - now )))"
+        else
+            printf '  next ping       due now (next cron tick)\n'
+        fi
+    fi
+    printf '  last ping       %s [%s]\n\n' "$(fmt "$LAST_PING")" "$LAST_STATUS"
+
+    if cron_installed; then
+        printf '  cron            installed: %s\n' "$(crontab -l 2>/dev/null | grep -F "$CRON_MARKER" | head -1)"
+    else
+        printf '  cron            NOT installed — run "keepwarm install"\n'
+    fi
+
+    if [ -s "$LOG_FILE" ]; then
+        printf '\n  recent activity\n'
+        tail -n 8 "$LOG_FILE" | sed 's/^/    /'
+    fi
+}
+
+# Answers "is this thing actually running?" without waiting for a ping.
+# Every hourly tick writes a log line even when nothing is due, so the log
+# doubles as a cron heartbeat.
+cmd_doctor() {
+    load_state
+    local now ok=0 warn=0 fail=0 last_tick last_epoch age next_tick ping_tick
+
+    now="$(now_epoch)"
+
+    check() { # check <ok|warn|fail> <label> <detail>
+        case "$1" in
+            ok)   printf '  [ok]   %-22s %s\n' "$2" "$3"; ok=$(( ok + 1 )) ;;
+            warn) printf '  [warn] %-22s %s\n' "$2" "$3"; warn=$(( warn + 1 )) ;;
+            *)    printf '  [FAIL] %-22s %s\n' "$2" "$3"; fail=$(( fail + 1 )) ;;
+        esac
+    }
+
+    printf 'keepwarm %s — doctor\n\n' "$KEEPWARM_VERSION"
+
+    if resolve_claude_bin 2>/dev/null; then
+        check ok "claude binary" "$CLAUDE_BIN"
+    else
+        check fail "claude binary" "not found — set CLAUDE_BIN in $CONFIG_FILE"
+    fi
+
+    if cron_installed; then
+        check ok "cron job" "installed (fires at :$(printf '%02d' "$CRON_MINUTE") every hour)"
+    else
+        check fail "cron job" "not installed — run 'keepwarm install'"
+    fi
+
+    # Not all systems expose the daemon under a predictable name, and some
+    # containers run no daemon at all. A miss here is a warning, not a failure:
+    # the heartbeat check below is the authoritative signal.
+    if cron_daemon_running; then
+        check ok "cron daemon" "running"
+    else
+        check warn "cron daemon" "not detected (may still be fine — see last tick)"
+    fi
+
+    if [ -s "$LOG_FILE" ]; then
+        last_tick="$(tail -n 1 "$LOG_FILE" | cut -c1-19)"
+        last_epoch="$(d_parse "$last_tick" 2>/dev/null || printf '0')"
+        age=$(( now - last_epoch ))
+        if [ "$last_epoch" -eq 0 ]; then
+            check warn "last tick" "could not parse log timestamp"
+        elif [ "$age" -le 3900 ]; then
+            check ok "last tick" "$(dur "$age") ago — cron is firing"
+        else
+            check fail "last tick" "$(dur "$age") ago — expected one every hour"
+        fi
+    else
+        check warn "last tick" "no log yet — cron has not run; first tick at :$(printf '%02d' "$CRON_MINUTE")"
+    fi
+
+    if [ "$WINDOW_END" -gt 0 ]; then
+        check ok "window tracked" "$(fmt "$WINDOW_START") -> $(fmt "$WINDOW_END")"
+    else
+        check warn "window tracked" "none yet — run 'keepwarm ping'"
+    fi
+
+    next_tick="$(tick_at_or_after "$now")"
+    printf '\n  next cron tick   %s (in %s)\n' "$(fmt "$next_tick")" "$(dur $(( next_tick - now )))"
+
+    if [ "$WINDOW_END" -gt 0 ]; then
+        ping_tick="$(tick_at_or_after "$(due_at)")"
+        if [ "$next_tick" -ge "$ping_tick" ]; then
+            printf '  that tick will   send a ping and open a new window\n'
+        else
+            printf '  that tick will   log a WAIT line and exit (no API call)\n'
+            printf '  first ping tick  %s (in %s)\n' "$(fmt "$ping_tick")" "$(dur $(( ping_tick - now )))"
+        fi
+    fi
+
+    printf '\n  %d ok, %d warning(s), %d failing\n' "$ok" "$warn" "$fail"
+    [ "$fail" -eq 0 ]
+}
+
+cmd_log() {
+    if [ -f "$LOG_FILE" ]; then tail -n "${1:-40}" "$LOG_FILE"; else say "no log yet"; fi
+}
+
+cron_line() {
+    printf '%s * * * * %s run >/dev/null 2>&1 %s' "$CRON_MINUTE" "$HERE/keepwarm" "$CRON_MARKER"
+}
+
+# Here-string rather than a pipe, for the pipefail/SIGPIPE reason in do_ping.
+cron_installed() { grep -qF "$CRON_MARKER" <<<"$(crontab -l 2>/dev/null)"; }
+
+cron_daemon_running() {
+    grep -qE '^(cron|crond)$' <<<"$(ps -Ao comm= 2>/dev/null | sed 's|.*/||')"
+}
+
+cmd_install() {
+    resolve_claude_bin || die "fix CLAUDE_BIN in $CONFIG_FILE before installing"
+    command -v crontab >/dev/null 2>&1 || die "crontab not found; see README for a systemd-timer alternative"
+
+    local line existing
+    line="$(cron_line)"
+    existing="$(crontab -l 2>/dev/null | grep -vF "$CRON_MARKER")"
+
+    if ! printf '%s\n%s\n' "$existing" "$line" | grep -v '^$' | crontab -; then
+        die "failed to write crontab"
+    fi
+
+    say "installed hourly cron job:"
+    say "  $line"
+    say ""
+    say "It checks every hour and only calls Claude when the window has actually"
+    say "expired, so a missed run (machine asleep, cron down) self-corrects."
+
+    load_state
+    if [ "$WINDOW_END" -eq 0 ]; then
+        say ""
+        say "No window recorded yet. Run 'keepwarm ping' to open the first one —"
+        say "do it at the top of an hour you like, that sets your boundary phase."
+    fi
+}
+
+cmd_uninstall() {
+    if ! cron_installed; then
+        say "no keepwarm cron job installed"
+        return 0
+    fi
+    local remaining
+    remaining="$(crontab -l 2>/dev/null | grep -vF "$CRON_MARKER")"
+    if [ -z "$(printf '%s' "$remaining" | tr -d '[:space:]')" ]; then
+        crontab -r 2>/dev/null
+    else
+        printf '%s\n' "$remaining" | crontab -
+    fi
+    say "removed the keepwarm cron job. State and logs kept in $HOME_DIR."
+}
+
+cmd_config() {
+    resolve_claude_bin 2>/dev/null || true
+    printf 'keepwarm %s (%s date)\n\n' "$KEEPWARM_VERSION" "$DATE_FLAVOR"
+    printf '%-24s %s%s\n' "config file" "$CONFIG_FILE" \
+        "$([ -f "$CONFIG_FILE" ] || printf ' (absent, using defaults)')"
+    printf '%-24s %s\n' "claude bin" "${CLAUDE_BIN:-NOT FOUND}"
+    printf '%-24s %s\n' "state" "$STATE_FILE"
+    printf '%-24s %s\n\n' "log" "$LOG_FILE"
+    local v
+    for v in WINDOW_HOURS SLACK_MINUTES MODEL CRON_MINUTE LOG_RETENTION_DAYS \
+             PING_ATTEMPTS PING_RETRY_DELAY SKIP_IF_RECENTLY_ACTIVE ACTIVITY_DIR; do
+        printf '%-24s %s\n' "$v" "${!v}"
+    done
+}
+
+usage() {
+    cat <<EOF
+keepwarm $KEEPWARM_VERSION — keep Claude Code's 5-hour usage window rolling
+
+  keepwarm install          install the hourly cron job
+  keepwarm ping             open a window now; also re-phases your boundaries
+  keepwarm doctor           is it actually running? cron, daemon, heartbeat
+  keepwarm status           current window, next ping, recent log
+
+  keepwarm run              ping only if the window expired (what cron calls)
+  keepwarm ping --dry-run   print the exact command without calling Claude
+  keepwarm log [n]          last n log lines (default 40)
+  keepwarm config           resolved settings and paths
+  keepwarm uninstall        remove the cron job
+  keepwarm version          print the version
+
+Configure by copying config.env.example to config.env next to this script.
+https://github.com/mamuncseru/claude-keepwarm
+EOF
+}
+
+case "${1:-}" in
+    run)            cmd_run ;;
+    ping)           shift; cmd_ping "$@" ;;
+    status|"")      cmd_status ;;
+    doctor)         cmd_doctor ;;
+    log)            shift; cmd_log "$@" ;;
+    install)        cmd_install ;;
+    uninstall)      cmd_uninstall ;;
+    config)         cmd_config ;;
+    version|--version|-V) printf '%s\n' "$KEEPWARM_VERSION" ;;
+    -h|--help|help) usage ;;
+    *)              usage; exit 1 ;;
+esac

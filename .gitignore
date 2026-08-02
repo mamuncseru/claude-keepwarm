@@ -1,0 +1,14 @@
+# Local configuration — copy config.env.example to config.env and edit that.
+config.env
+
+# Runtime data
+state/
+logs/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*~
+
+# Local Claude Code settings
+.claude/

@@ -1,0 +1,111 @@
+/* Minimal polish on top of Material. The goal is restraint: a hero, readable
+   figures, and one accent. Nothing here overrides Material's colour system. */
+
+:root {
+  --kw-radius: 10px;
+}
+
+/* ---------------------------------------------------------------- hero --- */
+
+.kw-hero {
+  text-align: center;
+  padding: 2.2rem 0 0.6rem;
+}
+
+.kw-hero h1 {
+  font-size: 2.5rem;
+  line-height: 1.15;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.6rem;
+}
+
+.kw-hero p.kw-tagline {
+  font-size: 1.08rem;
+  line-height: 1.6;
+  max-width: 34rem;
+  margin: 0 auto 1.4rem;
+  color: var(--md-default-fg-color--light);
+}
+
+.kw-cta {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+/* Figures sit on the page surface with a hairline, not a heavy card. */
+.kw-figure {
+  margin: 1.6rem 0 0.4rem;
+}
+
+.kw-figure img {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: var(--kw-radius);
+  display: block;
+}
+
+.kw-figure figcaption {
+  margin-top: 0.55rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--md-default-fg-color--light);
+  text-align: center;
+}
+
+/* ------------------------------------------------------------ stat row --- */
+
+.kw-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.8rem;
+  margin: 1.8rem 0;
+}
+
+.kw-stat {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: var(--kw-radius);
+  padding: 0.9rem 1rem;
+}
+
+.kw-stat .kw-num {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.kw-stat .kw-lab {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--md-default-fg-color--light);
+}
+
+/* Tables read better a touch tighter than the default. */
+.md-typeset table:not([class]) th {
+  font-size: 0.76rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.md-typeset table:not([class]) td,
+.md-typeset table:not([class]) th {
+  padding: 0.6rem 0.9rem;
+}
+
+/* Terminal-ish sample output blocks stay monospace but visually quiet. */
+.md-typeset .kw-term pre > code {
+  font-size: 0.74rem;
+  line-height: 1.55;
+}
+
+@media screen and (max-width: 44.9em) {
+  .kw-hero h1 { font-size: 1.9rem; }
+}

@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 312" width="900" height="312"
+     role="img" aria-labelledby="t2 d2" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title id="t2">With keepwarm: windows tile back to back, so there is never a wait</title>
+  <desc id="d2">The same timeline from 02:00 to 15:00. keepwarm sends a tiny ping just after each window expires, opening windows at 04:00, 09:00 and 14:00 while you are away. Starting work at 08:30 uses the tail of the running window, then a fresh full-quota window opens at 09:00. Access is never blocked.</desc>
+
+  <style>
+    .ink   { fill: #0b0b0b; }
+    .ink2  { fill: #52514e; }
+    .ink3  { fill: #8a8985; }
+    .surf  { fill: #fcfcfb; }
+    .onwin { fill: #ffffff; }
+    .rule  { stroke: #dcdbd6; }
+    .idle  { fill: #f0efec; }
+    .win   { fill: #256abf; }
+    .ping  { fill: #1baf7a; }
+    .pingS { stroke: #1baf7a; }
+    @media (prefers-color-scheme: dark) {
+      .ink   { fill: #ffffff; }
+      .ink2  { fill: #c3c2b7; }
+      .ink3  { fill: #8f8e86; }
+      .surf  { fill: #1a1a19; }
+      .rule  { stroke: #4a4a46; }
+      .idle  { fill: #383835; }
+      .win   { fill: #3987e5; }
+      .onwin { fill: #0b0b0b; }
+      .ping  { fill: #199e70; }
+      .pingS { stroke: #199e70; }
+    }
+  </style>
+
+  <rect class="surf" x="0" y="0" width="900" height="312" fill="#fcfcfb"/>
+
+  <text class="ink" x="34" y="36" font-size="16" font-weight="700" fill="#0b0b0b">With keepwarm</text>
+  <text class="ink2" x="34" y="57" font-size="13" fill="#52514e">A tiny ping after each expiry keeps windows tiling — idle time burns them instead.</text>
+
+  <!-- ============================ lane 1: windows ============================
+       2px surface gaps between adjacent bands, per the mark spec: the gap is
+       what makes three tiled windows read as three, not one long bar. -->
+  <text class="ink3" x="34" y="98" font-size="11" font-weight="600" fill="#8a8985" letter-spacing="0.6">USAGE WINDOW</text>
+
+  <rect class="win" x="90" y="106" width="106" height="40" rx="4" fill="#256abf"/>
+  <text class="onwin" x="143" y="131" font-size="12" font-weight="600" text-anchor="middle" fill="#ffffff">– 04:00</text>
+
+  <rect class="win" x="198" y="106" width="268" height="40" rx="4" fill="#256abf"/>
+  <text class="onwin" x="332" y="131" font-size="12.5" font-weight="600" text-anchor="middle" fill="#ffffff">window 04:00 – 09:00</text>
+
+  <rect class="win" x="470" y="106" width="266" height="40" rx="4" fill="#256abf"/>
+  <text class="onwin" x="603" y="131" font-size="12.5" font-weight="600" text-anchor="middle" fill="#ffffff">window 09:00 – 14:00</text>
+
+  <rect class="win" x="740" y="106" width="106" height="40" rx="4" fill="#256abf"/>
+  <text class="onwin" x="793" y="131" font-size="12" font-weight="600" text-anchor="middle" fill="#ffffff">14:00 –</text>
+
+  <!-- ping markers: distinct geometry (small triangles) as well as distinct
+       hue, so the two encodings never rely on colour alone -->
+  <g>
+    <polygon class="ping" points="198,158 192,168 204,168" fill="#1baf7a"/>
+    <polygon class="ping" points="470,158 464,168 476,168" fill="#1baf7a"/>
+    <polygon class="ping" points="740,158 734,168 746,168" fill="#1baf7a"/>
+    <line class="pingS" x1="198" y1="150" x2="198" y2="158" stroke="#1baf7a" stroke-width="2"/>
+    <line class="pingS" x1="470" y1="150" x2="470" y2="158" stroke="#1baf7a" stroke-width="2"/>
+    <line class="pingS" x1="740" y1="150" x2="740" y2="158" stroke="#1baf7a" stroke-width="2"/>
+  </g>
+  <text class="ink2" x="212" y="167" font-size="11.5" fill="#52514e">
+    keepwarm ping <tspan class="ink3" fill="#8a8985">· ~240 tokens</tspan>
+  </text>
+
+  <!-- ============================ lane 2: access ============================= -->
+  <text class="ink3" x="34" y="196" font-size="11" font-weight="600" fill="#8a8985" letter-spacing="0.6">YOUR ACCESS</text>
+
+  <rect class="idle" x="90" y="204" width="349" height="40" rx="4" fill="#f0efec"/>
+  <text class="ink2" x="264" y="229" font-size="12.5" text-anchor="middle" fill="#52514e">away</text>
+
+  <rect class="win" x="443" y="204" width="403" height="40" rx="4" fill="#256abf"/>
+  <text class="onwin" x="644" y="229" font-size="12.5" font-weight="700" text-anchor="middle" fill="#ffffff">working — never blocked</text>
+
+  <!-- ============================== markers ================================= -->
+  <line class="rule" x1="443" y1="172" x2="443" y2="200" stroke="#dcdbd6" stroke-width="1.5" stroke-dasharray="3 3"/>
+  <polygon points="443,96 438,88 448,88" class="ink" fill="#0b0b0b"/>
+  <text class="ink" x="443" y="82" font-size="11.5" font-weight="600" text-anchor="middle" fill="#0b0b0b">first message 08:30</text>
+
+  <line class="rule" x1="470" y1="248" x2="470" y2="262" stroke="#dcdbd6" stroke-width="1.5" stroke-dasharray="3 3"/>
+
+  <!-- ============================== time axis =============================== -->
+  <line class="rule" x1="90" y1="262" x2="846" y2="262" stroke="#dcdbd6" stroke-width="1"/>
+  <g class="ink3" font-size="11" text-anchor="middle" fill="#8a8985">
+    <text x="90"  y="280">02:00</text>
+    <text x="198" y="280">04:00</text>
+    <text x="470" y="280">09:00</text>
+    <text x="740" y="280">14:00</text>
+  </g>
+
+  <!-- ============================== takeaway ================================ -->
+  <text class="ink2" x="90" y="302" font-size="12.5" fill="#52514e">
+    <tspan font-weight="700">Same day, no wait.</tspan> You use the tail of the running window, then a full fresh one at 09:00.
+  </text>
+</svg>

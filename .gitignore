@@ -12,3 +12,6 @@ logs/
 
 # Local Claude Code settings
 .claude/
+
+# MkDocs build output
+site/

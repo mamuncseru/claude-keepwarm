@@ -1,0 +1,78 @@
+site_name: claude-keepwarm
+site_description: Keep Claude Code's 5-hour usage window rolling, so idle time burns windows instead of your working time.
+site_url: https://mamuncseru.github.io/claude-keepwarm/
+repo_url: https://github.com/mamuncseru/claude-keepwarm
+repo_name: mamuncseru/claude-keepwarm
+edit_uri: ""
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    # Blue to match the figures; the toggle is the only chrome on the header.
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.top
+    - navigation.sections
+    - navigation.tracking
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+
+# docs/requirements.txt is a build input, not a page — keep it out of the site.
+exclude_docs: |
+  requirements.txt
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+nav:
+  - Home: index.md
+  - How it works: how-it-works.md
+  - Install: install.md
+  - Reference: reference.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/mamuncseru/claude-keepwarm
+      name: claude-keepwarm on GitHub
+
+copyright: MIT licensed. An unofficial community tool, not affiliated with Anthropic.

@@ -1,0 +1,7 @@
+# Docs build dependencies.
+#
+# Pinned to major versions: MkDocs 2.0 is documented by the Material team as
+# backward-incompatible with no migration path, so an unpinned install would
+# break the site build without warning.
+mkdocs>=1.6,<2
+mkdocs-material>=9.5,<10

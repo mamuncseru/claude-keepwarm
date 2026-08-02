@@ -47,22 +47,31 @@ jobs:
         # the 3.2 system bash explicitly — that is what most macOS users have.
         run: /bin/bash ./tests/run.sh
 
-  windows:
-    name: tests (windows, ${{ matrix.shell }})
+  # Two explicit jobs rather than a matrix: the `matrix` context is not
+  # available in a step's `shell:` key, so `shell: ${{ matrix.shell }}` is a
+  # workflow syntax error. Duplicating six lines is cheaper than the workaround.
+  windows-ps51:
+    name: tests (Windows PowerShell 5.1)
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # `powershell` is Windows PowerShell 5.1 — what ships with Windows and
-        # what most users will actually run. `pwsh` is PowerShell 7.
-        shell: [powershell, pwsh]
     steps:
       - uses: actions/checkout@v4
       - name: Show environment
-        shell: ${{ matrix.shell }}
+        shell: powershell
         run: $PSVersionTable
       - name: Run tests
-        shell: ${{ matrix.shell }}
+        shell: powershell
+        run: .\tests\run.ps1
+
+  windows-ps7:
+    name: tests (PowerShell 7)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show environment
+        shell: pwsh
+        run: $PSVersionTable
+      - name: Run tests
+        shell: pwsh
         run: .\tests\run.ps1
 
   windows-lint:

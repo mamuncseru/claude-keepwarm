@@ -116,7 +116,11 @@
    Material only displays the label belonging to the active scheme, so exactly
    one of these is on screen at a time. */
 
-.md-header__option label.md-header__button.md-icon::after {
+/* :not([hidden]) is load-bearing. Material renders BOTH labels with the
+   `hidden` attribute and lets JS un-hide the active one; an unconditional
+   author `display` rule beats the UA stylesheet's [hidden]{display:none} and
+   shows two buttons instead of one toggle. */
+.md-header__option label.md-header__button.md-icon:not([hidden])::after {
   content: attr(title);
   font-size: 0.62rem;
   font-weight: 600;
@@ -126,7 +130,7 @@
   white-space: nowrap;
 }
 
-.md-header__option label.md-header__button.md-icon {
+.md-header__option label.md-header__button.md-icon:not([hidden]) {
   display: inline-flex;
   align-items: center;
   width: auto;
@@ -140,6 +144,6 @@
 
 /* Cramped headers: keep the icon, drop the words. */
 @media screen and (max-width: 59.9em) {
-  .md-header__option label.md-header__button.md-icon::after { content: none; }
-  .md-header__option label.md-header__button.md-icon { padding-right: 0; }
+  .md-header__option label.md-header__button.md-icon:not([hidden])::after { content: none; }
+  .md-header__option label.md-header__button.md-icon:not([hidden]) { padding-right: 0; }
 }

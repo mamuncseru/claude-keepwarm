@@ -29,7 +29,12 @@ First release. Verified by hand on macOS, Linux and Windows.
   window; rate limits leave state untouched and retry next tick; transient
   local failures retry in-process; expired logins are never retried and report
   how to fix themselves.
-- Test suites for both ports (21 bash, 16 PowerShell) using a stubbed CLI and
+- `uninstall` stops the schedule and keeps your state, so reinstalling resumes
+  the same window; `uninstall --purge` also deletes `state/` and `logs/` for
+  full removal in one command. The purge only ever deletes paths whose last
+  component is `state` or `logs` - `KEEPWARM_HOME` is user-supplied, and an
+  unguarded recursive delete on it is how tools eat someone's home directory.
+- Test suites for both ports (25 bash, 16 PowerShell) using a stubbed CLI and
   a fake `crontab` — no network, no API calls, and your real schedule is never
   touched.
 - CI across Linux, macOS, bash 3.2, Windows PowerShell 5.1 and 7, a real Task

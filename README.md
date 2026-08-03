@@ -134,11 +134,24 @@ hooks and MCP. A plain `claude -p hi` uses roughly 60x more.
 | `keepwarm doctor` | Health check: binary, schedule, daemon, heartbeat, window |
 | `keepwarm status` | Current window, next ping, recent log |
 | `keepwarm log [n]` | Last n log lines |
-| `keepwarm uninstall` | Remove the schedule |
+| `keepwarm uninstall` | Remove the schedule (add `--purge` to delete state and logs too) |
 
 On Windows, use `.\keepwarm.ps1` in place of `./keepwarm`. Full command,
 configuration and troubleshooting reference is
 [in the docs](https://mamuncseru.github.io/claude-keepwarm/reference/).
+
+## Stopping it
+
+```sh
+./keepwarm uninstall            # stop it, keep your window state
+./keepwarm uninstall --purge    # stop it and delete state and logs
+```
+
+> **Uninstall before deleting the folder.** Removing the directory does *not*
+> remove the schedule — the cron entry survives, fires hourly forever, and
+> fails silently. If you already deleted it:
+> `crontab -l | grep -v claude-keepwarm | crontab -` (macOS/Linux) or
+> `Unregister-ScheduledTask -TaskName claude-keepwarm -Confirm:$false` (Windows).
 
 ## Limitations
 
@@ -155,7 +168,7 @@ early — which shows up as a `LIMITED` line and a retry, not as breakage. Raise
 ## Development
 
 ```sh
-./tests/run.sh          # 21 tests — no network, no API calls, no real crontab
+./tests/run.sh          # 25 tests — no network, no API calls, no real crontab
 shellcheck -s bash keepwarm tests/run.sh
 ```
 

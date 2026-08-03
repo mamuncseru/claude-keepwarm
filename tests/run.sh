@@ -302,6 +302,44 @@ test_install_preserves_other_cron_entries() {
     assert_match "$(cat "$FAKE_CRONTAB")" "backup.sh" "unrelated entry preserved on uninstall"
 }
 
+test_uninstall_keeps_state_by_default() {
+    "$KW" install >/dev/null 2>&1
+    "$KW" ping >/dev/null 2>&1
+    "$KW" uninstall >/dev/null 2>&1
+    assert_eq "0" "$(grep -c 'claude-keepwarm' "$FAKE_CRONTAB")" "schedule removed"
+    if [ ! -f "$KEEPWARM_HOME/state/window.env" ]; then
+        fail_test "state should survive a plain uninstall so reinstalling keeps the window"
+    fi
+}
+
+test_uninstall_purge_removes_state_and_logs() {
+    "$KW" install >/dev/null 2>&1
+    "$KW" ping >/dev/null 2>&1
+    "$KW" uninstall --purge >/dev/null 2>&1
+    assert_eq "0" "$(grep -c 'claude-keepwarm' "$FAKE_CRONTAB")" "schedule removed"
+    if [ -d "$KEEPWARM_HOME/state" ]; then fail_test "--purge should remove state/"; fi
+    if [ -d "$KEEPWARM_HOME/logs" ];  then fail_test "--purge should remove logs/"; fi
+}
+
+# KEEPWARM_HOME is user-supplied. --purge must never recursively delete a
+# directory that isn't one of ours.
+test_purge_refuses_paths_that_are_not_ours() {
+    local victim="$SANDBOX/precious"
+    mkdir -p "$victim"
+    printf 'do not delete\n' >"$victim/important.txt"
+    KEEPWARM_STATE_DIR_OVERRIDE=1 \
+      KEEPWARM_HOME="$KEEPWARM_HOME" "$KW" uninstall --purge >/dev/null 2>&1
+    if [ ! -f "$victim/important.txt" ]; then
+        fail_test "--purge deleted an unrelated directory"
+    fi
+}
+
+test_uninstall_when_nothing_installed_is_harmless() {
+    local out
+    out="$("$KW" uninstall 2>&1)"
+    assert_match "$out" "no keepwarm cron job was installed" "says so plainly"
+}
+
 test_doctor_fails_without_cron() {
     "$KW" ping >/dev/null 2>&1
     if "$KW" doctor >/dev/null 2>&1; then

@@ -645,18 +645,37 @@ cmd_install() {
 }
 
 cmd_uninstall() {
-    if ! cron_installed; then
-        say "no keepwarm cron job installed"
-        return 0
-    fi
-    local remaining
-    remaining="$(crontab -l 2>/dev/null | grep -vF "$CRON_MARKER")"
-    if [ -z "$(printf '%s' "$remaining" | tr -d '[:space:]')" ]; then
-        crontab -r 2>/dev/null
+    local purge=0
+    [ "${1:-}" = "--purge" ] && purge=1
+
+    if cron_installed; then
+        local remaining
+        remaining="$(crontab -l 2>/dev/null | grep -vF "$CRON_MARKER")"
+        if [ -z "$(printf '%s' "$remaining" | tr -d '[:space:]')" ]; then
+            crontab -r 2>/dev/null
+        else
+            printf '%s\n' "$remaining" | crontab -
+        fi
+        say "removed the keepwarm cron job - nothing is scheduled any more."
     else
-        printf '%s\n' "$remaining" | crontab -
+        say "no keepwarm cron job was installed."
     fi
-    say "removed the keepwarm cron job. State and logs kept in $HOME_DIR."
+
+    if [ "$purge" -eq 1 ]; then
+        # Only ever delete paths that look like ours. KEEPWARM_HOME is
+        # user-supplied, and an unguarded rm -rf on it is how tools eat
+        # someone's home directory.
+        case "$STATE_DIR" in */state) rm -rf "$STATE_DIR" ;; esac
+        case "$LOG_DIR"   in */logs)  rm -rf "$LOG_DIR"   ;; esac
+        say "purged state and logs."
+        say ""
+        say "keepwarm is fully removed. Delete this directory when you like."
+    else
+        say ""
+        say "State and logs are kept in $HOME_DIR"
+        say "  - re-run 'keepwarm install' to start again with the same window"
+        say "  - or 'keepwarm uninstall --purge' to delete them too"
+    fi
 }
 
 cmd_config() {
@@ -687,7 +706,7 @@ keepwarm $KEEPWARM_VERSION — keep Claude Code's 5-hour usage window rolling
   keepwarm ping --dry-run   print the exact command without calling Claude
   keepwarm log [n]          last n log lines (default 40)
   keepwarm config           resolved settings and paths
-  keepwarm uninstall        remove the cron job
+  keepwarm uninstall        remove the cron job (add --purge to drop state too)
   keepwarm version          print the version
 
 Configure by copying config.env.example to config.env next to this script.
@@ -702,7 +721,7 @@ case "${1:-}" in
     doctor)         cmd_doctor ;;
     log)            shift; cmd_log "$@" ;;
     install)        cmd_install ;;
-    uninstall)      cmd_uninstall ;;
+    uninstall)      shift; cmd_uninstall "$@" ;;
     config)         cmd_config ;;
     version|--version|-V) printf '%s\n' "$KEEPWARM_VERSION" ;;
     -h|--help|help) usage ;;

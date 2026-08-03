@@ -657,12 +657,37 @@ function Invoke-CmdInstall {
 }
 
 function Invoke-CmdUninstall {
-    if (-not (Get-KwTask)) {
-        Write-Say 'no keepwarm scheduled task installed'
-        return
+    param([string[]]$UninstallArgs = @())
+    $purge = $UninstallArgs -contains '--purge'
+
+    if (-not (Test-HasTaskCmdlets)) {
+        Write-Say 'Task Scheduler cmdlets are unavailable here, so the schedule cannot be checked.'
+    } elseif (Get-KwTask) {
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        Write-Say "removed scheduled task '$TaskName' - nothing is scheduled any more."
+    } else {
+        Write-Say 'no keepwarm scheduled task was installed.'
     }
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-    Write-Say "removed scheduled task '$TaskName'. State and logs kept in $HomeDir."
+
+    if ($purge) {
+        # Only ever delete paths that look like ours: KEEPWARM_HOME is
+        # user-supplied and an unguarded recursive delete on it is how tools
+        # eat someone's home directory.
+        if ((Split-Path -Leaf $StateDir) -eq 'state') {
+            Remove-Item -LiteralPath $StateDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if ((Split-Path -Leaf $LogDir) -eq 'logs') {
+            Remove-Item -LiteralPath $LogDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Write-Say 'purged state and logs.'
+        Write-Say ''
+        Write-Say 'keepwarm is fully removed. Delete this directory when you like.'
+    } else {
+        Write-Say ''
+        Write-Say "State and logs are kept in $HomeDir"
+        Write-Say "  - re-run '.\keepwarm.ps1 install' to start again with the same window"
+        Write-Say "  - or '.\keepwarm.ps1 uninstall --purge' to delete them too"
+    }
 }
 
 function Invoke-CmdLog {
@@ -701,7 +726,7 @@ keepwarm $KeepwarmVersion - keep Claude Code's 5-hour usage window rolling
   .\keepwarm.ps1 ping --dry-run   print the exact command without calling Claude
   .\keepwarm.ps1 log [n]          last n log lines (default 40)
   .\keepwarm.ps1 config           resolved settings and paths
-  .\keepwarm.ps1 uninstall        remove the scheduled task
+  .\keepwarm.ps1 uninstall        remove the task (add --purge to drop state too)
   .\keepwarm.ps1 version          print the version
 
 Configure by copying config.env.example to config.env next to this script.
@@ -719,7 +744,7 @@ switch ($Command) {
     'doctor'    { $exit = Invoke-CmdDoctor }
     'log'       { Invoke-CmdLog -LogArgs $Rest }
     'install'   { Invoke-CmdInstall }
-    'uninstall' { Invoke-CmdUninstall }
+    'uninstall' { Invoke-CmdUninstall -UninstallArgs $Rest }
     'config'    { Invoke-CmdConfig }
     'version'   { Write-Say $KeepwarmVersion }
     'help'      { Show-Usage }

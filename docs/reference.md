@@ -15,7 +15,8 @@ On Windows, every command is identical with `.\keepwarm.ps1` in place of
 | `keepwarm ping --dry-run` | Print the exact command without calling Claude |
 | `keepwarm log [n]` | Last n log lines (default 40) |
 | `keepwarm config` | Resolved settings and paths |
-| `keepwarm uninstall` | Remove the schedule |
+| `keepwarm uninstall` | Remove the schedule, keep state |
+| `keepwarm uninstall --purge` | Remove the schedule and delete state and logs |
 | `keepwarm version` | Print the version |
 
 ### Exit codes
@@ -89,6 +90,57 @@ logs/keepwarm.log   one line per tick, pruned after 30 days
 The state file is plain `KEY=value` and shared by both ports, so moving between
 WSL and native Windows keeps your window.
 
+## Stopping and uninstalling
+
+### Stop it for now, keep your setup
+
+```sh
+./keepwarm uninstall          # Windows: .\keepwarm.ps1 uninstall
+```
+
+Removes the schedule and nothing else. No more pings. Your window state and
+logs stay put, so `keepwarm install` later picks up exactly where you left off.
+
+### Remove it completely
+
+```sh
+./keepwarm uninstall --purge  # Windows: .\keepwarm.ps1 uninstall --purge
+```
+
+Removes the schedule *and* deletes `state/` and `logs/`. Then delete the folder
+whenever you like.
+
+!!! warning "Uninstall before you delete the folder"
+
+    Deleting the directory does **not** remove the schedule. The cron entry (or
+    scheduled task) survives, fires every hour forever, and fails silently -
+    the cron line redirects output to `/dev/null`, so nothing ever tells you.
+
+    If you already deleted it, remove the leftover entry by hand:
+
+    === "macOS / Linux"
+
+        ```sh
+        crontab -l | grep -v claude-keepwarm | crontab -
+        ```
+
+    === "Windows"
+
+        ```powershell
+        Unregister-ScheduledTask -TaskName claude-keepwarm -Confirm:$false
+        ```
+
+### Verify it's gone
+
+```sh
+crontab -l | grep claude-keepwarm            # macOS / Linux: expect no output
+Get-ScheduledTask -TaskName claude-keepwarm  # Windows: expect "not found"
+```
+
+keepwarm holds no credentials, installs nothing outside its own folder, and
+changes no Claude Code settings - so once the schedule is gone, nothing of it
+is left running.
+
 ## Troubleshooting
 
 ??? question "`doctor` says the schedule is installed but `last tick` is stale"
@@ -137,7 +189,7 @@ WSL and native Windows keeps your window.
 ## Development
 
 ```sh
-./tests/run.sh          # 21 tests — no network, no API calls, no real crontab
+./tests/run.sh          # 25 tests — no network, no API calls, no real crontab
 ./tests/run.sh lock     # filter by name
 shellcheck -s bash keepwarm tests/run.sh
 ```

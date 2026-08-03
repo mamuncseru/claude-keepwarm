@@ -94,8 +94,17 @@ history in Task Scheduler.
 ## Uninstalling
 
 ```sh
-./keepwarm uninstall          # or: .\keepwarm.ps1 uninstall
+./keepwarm uninstall            # stop it, keep your window state
+./keepwarm uninstall --purge    # stop it and delete state and logs
 ```
 
-That removes only the schedule. Delete the cloned directory to remove state and
-logs as well.
+!!! warning "Uninstall before deleting the folder"
+
+    Deleting the directory does **not** remove the schedule - the cron entry or
+    scheduled task survives and fires hourly forever, failing silently. If you
+    already deleted it: `crontab -l | grep -v claude-keepwarm | crontab -` on
+    macOS/Linux, or
+    `Unregister-ScheduledTask -TaskName claude-keepwarm -Confirm:$false` on
+    Windows.
+
+See [Reference](reference.md#stopping-and-uninstalling) for the full details.

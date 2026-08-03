@@ -17,6 +17,26 @@ jobs:
       - uses: actions/checkout@v4
       - run: shellcheck --version
       - run: shellcheck -s bash keepwarm tests/run.sh
+      - name: PowerShell sources must be ASCII after any BOM
+        # Windows PowerShell 5.1 decodes a BOM-less .ps1 as ANSI (CP1252),
+        # where an em-dash's trailing byte becomes a smart double-quote and
+        # desyncs the parser. Both the BOM and ASCII-only guard against that;
+        # this check keeps the second one honest.
+        run: |
+          python3 - <<'EOF'
+          import sys
+          bad = False
+          for f in ("keepwarm.ps1", "tests/run.ps1"):
+              data = open(f, "rb").read()
+              if data.startswith(b"\xef\xbb\xbf"):
+                  data = data[3:]
+              for i, b in enumerate(data):
+                  if b > 127:
+                      print(f"::error file={f}::non-ASCII byte 0x{b:02x} at offset {i}")
+                      bad = True
+                      break
+          sys.exit(1 if bad else 0)
+          EOF
 
   test:
     name: tests (${{ matrix.os }})
@@ -85,10 +105,13 @@ jobs:
       - name: Analyze
         shell: powershell
         run: |
-          $r = Invoke-ScriptAnalyzer -Path .\keepwarm.ps1, .\tests\run.ps1 -Severity Error,Warning
+          # -Path is [string], not [string[]] - passing both at once threw
+          # "Cannot convert 'System.Object[]' to the type 'System.String'".
+          $r = @('.\keepwarm.ps1', '.\tests\run.ps1') | ForEach-Object {
+                 Invoke-ScriptAnalyzer -Path $_ -Severity Error,Warning }
           $r | Format-Table -AutoSize
           # Fail on errors; warnings are reported but not gating.
-          if ($r | Where-Object Severity -eq 'Error') { exit 1 }
+          if ($r | Where-Object { $_.Severity -eq 'Error' }) { exit 1 }
 
   windows-task-smoke:
     name: Task Scheduler install/uninstall

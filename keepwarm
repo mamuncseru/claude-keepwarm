@@ -20,7 +20,7 @@
 #
 set -uo pipefail
 
-KEEPWARM_VERSION="1.2.0"
+KEEPWARM_VERSION="1.2.1"
 
 # Resolve our own directory, following symlinks so `ln -s keepwarm ~/bin/`
 # works. readlink -f is GNU-only, so walk the links manually.

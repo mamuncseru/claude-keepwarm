@@ -1,11 +1,11 @@
-<#
+﻿<#
     keepwarm Windows test suite. No network, no API calls, no scheduled tasks.
 
     Mirrors tests/run.sh. Each test runs in a throwaway sandbox with a stub
     `claude.cmd` (canned responses, counts invocations) pointed at via
     KEEPWARM_CLAUDE_BIN, so results don't depend on the developer's machine.
 
-    Task Scheduler registration is deliberately NOT unit-tested here — it has
+    Task Scheduler registration is deliberately NOT unit-tested here - it has
     no safe stub. CI covers it with a real install/uninstall smoke test.
 
         .\tests\run.ps1              run everything
@@ -19,7 +19,10 @@ $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $Kw   = Join-Path $Root 'keepwarm.ps1'
-$Ps   = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+# The PowerShell running THIS suite - not a hardcoded 5.1 path. Hardcoding it
+# meant the PowerShell 7 CI job silently tested 5.1 instead.
+$Ps   = (Get-Process -Id $PID).Path
+$OnWindows = if ($PSVersionTable.PSEdition -eq 'Desktop') { $true } else { $IsWindows }
 
 $script:Pass = 0
 $script:Fail = 0
@@ -38,8 +41,11 @@ function New-Sandbox {
     $script:StubFlag = Join-Path $script:Sandbox 'flaky.flag'
     New-Item -ItemType File -Force -Path $script:StubLog | Out-Null
 
-    $stub = Join-Path $script:Sandbox 'claude.cmd'
-    @'
+    # A stub for whichever platform we are on, so the suite runs on Windows,
+    # macOS and Linux alike.
+    if ($OnWindows) {
+        $stub = Join-Path $script:Sandbox 'claude.cmd'
+        $body = @'
 @echo off
 >>"%STUB_LOG%" echo call
 if "%STUB_MODE%"=="limited" (
@@ -59,9 +65,31 @@ if "%STUB_MODE%"=="flaky" (
   echo {"is_error":false,"result":"ok"}
   exit /b 0
 )
-echo {"is_error":false,"result":"ok","usage":{"input_tokens":159,"output_tokens":71}}
+echo {"is_error":false,"result":"ok","usage":{"input_tokens":167,"output_tokens":71}}
 exit /b 0
-'@ | Set-Content -LiteralPath $stub -Encoding ASCII
+'@
+        [IO.File]::WriteAllText($stub, $body)
+    } else {
+        $stub = Join-Path $script:Sandbox 'claude.sh'
+        $body = @'
+#!/usr/bin/env bash
+printf 'call\n' >>"$STUB_LOG"
+case "${STUB_MODE:-ok}" in
+  limited) printf 'Claude usage limit reached. Your limit will reset at 3pm.\n'; exit 0 ;;
+  error)   printf '{"is_error":true,"result":"stub failure"}\n'; exit 1 ;;
+  flaky)
+    if [ ! -f "$STUB_FLAG" ]; then
+      printf 'x' >"$STUB_FLAG"
+      printf '{"is_error":true,"result":"transient"}\n'; exit 1
+    fi
+    printf '{"is_error":false,"result":"ok"}\n'; exit 0 ;;
+  *) printf '{"is_error":false,"result":"ok","usage":{"input_tokens":167}}\n'; exit 0 ;;
+esac
+'@
+        # LF only: CRLF would break the shebang.
+        [IO.File]::WriteAllText($stub, ($body -replace "`r`n", "`n"))
+        & chmod +x $stub
+    }
 
     $env:STUB_LOG                    = $script:StubLog
     $env:STUB_FLAG                   = $script:StubFlag

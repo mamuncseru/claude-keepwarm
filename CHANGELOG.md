@@ -4,6 +4,39 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] — 2026-08-02
+
+### Fixed
+- **Windows PowerShell 5.1 could not parse `keepwarm.ps1` at all.** 5.1 decodes
+  a BOM-less `.ps1` as ANSI (CP1252), not UTF-8. There, an em-dash's trailing
+  byte (`0x94`) becomes U+201D — a smart double-quote, which PowerShell's
+  tokenizer treats as a string delimiter. One em-dash inside a single-quoted
+  string desynced the parser and cascaded into seven errors. Both PowerShell
+  files are now ASCII-only *and* carry a UTF-8 BOM, and CI fails on any
+  non-ASCII byte so the class of bug cannot return silently.
+- **The PowerShell 7 CI job was secretly testing 5.1.** `tests/run.ps1`
+  hardcoded the Windows PowerShell path when spawning the script under test, so
+  the pwsh job exercised the wrong interpreter. It now uses the host it is
+  running under.
+- **`keepwarm.ps1` crashed at load on any non-Windows host.** `$env:USERPROFILE`
+  is null off Windows and `Join-Path` throws on a null `-Path`. Added a
+  `$UserHome` fallback and made the binary-search globs conditional.
+- `Get-ScheduledTask` / `Get-Service` are now probed with `Get-Command` before
+  use — `-ErrorAction SilentlyContinue` does not suppress a *missing cmdlet*,
+  which throws under `$ErrorActionPreference = 'Stop'`. `status` and `doctor`
+  consequently work on macOS and Linux too.
+- `install` registers the task against the PowerShell that ran it, so
+  installing from pwsh 7 no longer silently schedules 5.1.
+- CI: `Invoke-ScriptAnalyzer -Path` takes a string, not an array — passing both
+  files at once failed the lint job outright.
+- CI: shellcheck exits non-zero on SC1091; the sourced runtime state file is
+  now explicitly exempted.
+
+### Changed
+- `tests/run.ps1` now runs on macOS and Linux as well as Windows: the stub is
+  emitted as a shell script off Windows and a `.cmd` on it. This is what made
+  the port testable outside CI.
+
 ## [1.2.0] — 2026-08-02
 
 ### Added
@@ -63,5 +96,6 @@ First public release.
   rather than `epoch % 3600`, which was wrong in half-hour timezones such as
   `Asia/Kolkata` and `Asia/Kathmandu`.
 
+[1.2.1]: https://github.com/mamuncseru/claude-keepwarm/releases/tag/v1.2.1
 [1.2.0]: https://github.com/mamuncseru/claude-keepwarm/releases/tag/v1.2.0
 [1.1.0]: https://github.com/mamuncseru/claude-keepwarm/releases/tag/v1.1.0

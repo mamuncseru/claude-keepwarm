@@ -83,6 +83,8 @@ teardown() {
 }
 
 calls()      { wc -l <"$STUB_LOG" | tr -d ' '; }
+# SC1091: the state file is generated at runtime, so there is nothing to follow.
+# shellcheck disable=SC1091
 state_get()  { ( . "$KEEPWARM_HOME/state/window.env" 2>/dev/null; eval "printf '%s' \"\${$1:-}\"" ); }
 logtext()    { cat "$KEEPWARM_HOME/logs/keepwarm.log" 2>/dev/null; }
 

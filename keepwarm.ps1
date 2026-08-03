@@ -1,12 +1,12 @@
-<#
+﻿<#
 .SYNOPSIS
-    keepwarm — keep Claude Code's 5-hour usage window rolling. (Windows port)
+    keepwarm - keep Claude Code's 5-hour usage window rolling. (Windows port)
 
 .DESCRIPTION
     Claude Code's usage window starts at the top of the hour containing your
     FIRST message and lasts 5 hours. It does not tick while you are away. Idle
     all night, start at 09:00, exhaust the quota by 10:00, and you wait until
-    14:00 — having gained nothing from the idle hours.
+    14:00 - having gained nothing from the idle hours.
 
     keepwarm sends one tiny prompt just after each window expires, so windows
     tile back-to-back around the clock. You do not get more quota per window;
@@ -39,13 +39,17 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$KeepwarmVersion = '1.2.0'
+$KeepwarmVersion = '1.2.1'
 $TaskName        = 'claude-keepwarm'
 
 # --------------------------------------------------------------------- paths --
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 $ScriptDir  = Split-Path -Parent $ScriptPath
+
+# $env:USERPROFILE is null off Windows, and Join-Path throws on a null Path -
+# which crashed the script at load time before it printed anything.
+$UserHome = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 
 $HomeDir = if ($env:KEEPWARM_HOME) { $env:KEEPWARM_HOME } else { $ScriptDir }
 $StateDir  = Join-Path $HomeDir 'state'
@@ -73,7 +77,7 @@ $Config = @{
     PING_ATTEMPTS           = 3
     PING_RETRY_DELAY        = 20
     SKIP_IF_RECENTLY_ACTIVE = 1
-    ACTIVITY_DIR            = (Join-Path $env:USERPROFILE '.claude\projects')
+    ACTIVITY_DIR            = (Join-Path (Join-Path $UserHome '.claude') 'projects')
     CLAUDE_BIN              = ''
 }
 
@@ -161,14 +165,17 @@ function Resolve-ClaudeBin {
     # The VS Code / Cursor extensions bundle their own copy in a
     # version-numbered directory and do not add it to PATH. Sort descending so
     # an extension update does not break the scheduled task.
-    $globs = @(
-        (Join-Path $env:USERPROFILE '.vscode\extensions\anthropic.claude-code-*\resources\native-binary\claude.exe'),
-        (Join-Path $env:USERPROFILE '.cursor\extensions\anthropic.claude-code-*\resources\native-binary\claude.exe'),
-        (Join-Path $env:USERPROFILE '.local\bin\claude.exe'),
-        (Join-Path $env:USERPROFILE '.claude\local\claude.exe'),
-        (Join-Path $env:USERPROFILE '.bun\bin\claude.exe'),
-        (Join-Path $env:APPDATA 'npm\claude.cmd')
-    )
+    # Built conditionally: a null base would throw rather than just not match.
+    # Forward slashes are accepted on Windows too.
+    $globs = @()
+    if ($UserHome) {
+        $globs += (Join-Path $UserHome '.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude.exe')
+        $globs += (Join-Path $UserHome '.cursor/extensions/anthropic.claude-code-*/resources/native-binary/claude.exe')
+        $globs += (Join-Path $UserHome '.local/bin/claude.exe')
+        $globs += (Join-Path $UserHome '.claude/local/claude.exe')
+        $globs += (Join-Path $UserHome '.bun/bin/claude.exe')
+    }
+    if ($env:APPDATA) { $globs += (Join-Path $env:APPDATA 'npm/claude.cmd') }
     foreach ($g in $globs) {
         $hit = Get-ChildItem -Path $g -ErrorAction SilentlyContinue |
                Sort-Object FullName -Descending | Select-Object -First 1
@@ -348,11 +355,23 @@ function Remove-OldLogLines {
 
 # ------------------------------------------------------------------- tasks --
 
+# Guarded so status/doctor also work on a host without Task Scheduler (macOS,
+# Linux, PowerShell 7 anywhere). -ErrorAction does not suppress a *missing
+# cmdlet*, which throws under $ErrorActionPreference = 'Stop'.
+function Test-HasTaskCmdlets {
+    [bool](Get-Command Register-ScheduledTask -ErrorAction SilentlyContinue)
+}
+
 function Get-KwTask {
+    if (-not (Test-HasTaskCmdlets)) { return $null }
     Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 }
 
+# Register the task against the PowerShell the user actually ran install with,
+# so installing from pwsh 7 does not silently schedule Windows PowerShell 5.1.
 function Get-PowerShellPath {
+    $current = (Get-Process -Id $PID).Path
+    if ($current) { return $current }
     Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 }
 
@@ -420,12 +439,12 @@ function Invoke-CmdPing {
     switch ($status) {
         'ok' {
             Open-KwWindow -State $state -At $state.LAST_PING
-            Write-Say "ok — window is now $(Format-Epoch $state.WINDOW_START) -> $(Format-Epoch $state.WINDOW_END)"
+            Write-Say "ok - window is now $(Format-Epoch $state.WINDOW_START) -> $(Format-Epoch $state.WINDOW_END)"
             return 0
         }
         'limited' {
             Set-KwState -State $state
-            Write-Say 'still rate limited — you are inside an existing window. Nothing lost; try later.'
+            Write-Say 'still rate limited - you are inside an existing window. Nothing lost; try later.'
             return 2
         }
         default {
@@ -450,7 +469,7 @@ function Invoke-CmdStatus {
     Write-Say ''
 
     if ($state.WINDOW_END -le 0) {
-        Write-Say '  window          none recorded yet — run ".\keepwarm.ps1 ping"'
+        Write-Say '  window          none recorded yet - run ".\keepwarm.ps1 ping"'
     } else {
         Write-Say ("  window          {0}  ->  {1}" -f (Format-Epoch $state.WINDOW_START), (Format-Epoch $state.WINDOW_END))
         if ($now -lt $state.WINDOW_END) {
@@ -470,7 +489,7 @@ function Invoke-CmdStatus {
     if (Get-KwTask) {
         Write-Say "  task            installed: $TaskName (hourly)"
     } else {
-        Write-Say '  task            NOT installed — run ".\keepwarm.ps1 install"'
+        Write-Say '  task            NOT installed - run ".\keepwarm.ps1 install"'
     }
 
     if ((Test-Path -LiteralPath $LogFile) -and (Get-Item -LiteralPath $LogFile).Length -gt 0) {
@@ -494,18 +513,21 @@ function Invoke-CmdDoctor {
     }
     $script:ok = 0; $script:warn = 0; $script:fail = 0
 
-    Write-Say "keepwarm $KeepwarmVersion — doctor (windows)"
+    Write-Say "keepwarm $KeepwarmVersion - doctor (windows)"
     Write-Say ''
 
     $bin = Resolve-ClaudeBin
     if ($bin) { Write-Check ok 'claude binary' $bin }
-    else { Write-Check fail 'claude binary' "not found — set CLAUDE_BIN in $ConfigFile" }
+    else { Write-Check fail 'claude binary' "not found - set CLAUDE_BIN in $ConfigFile" }
 
     $task = Get-KwTask
     if ($task) { Write-Check ok 'scheduled task' "$TaskName ($($task.State))" }
-    else { Write-Check fail 'scheduled task' 'not installed — run ".\keepwarm.ps1 install"' }
+    else { Write-Check fail 'scheduled task' 'not installed - run ".\keepwarm.ps1 install"' }
 
-    $svc = Get-Service -Name 'Schedule' -ErrorAction SilentlyContinue
+    $svc = $null
+    if (Get-Command Get-Service -ErrorAction SilentlyContinue) {
+        $svc = Get-Service -Name 'Schedule' -ErrorAction SilentlyContinue
+    }
     if ($svc -and $svc.Status -eq 'Running') { Write-Check ok 'task scheduler' 'running' }
     else { Write-Check warn 'task scheduler' 'not detected (see last tick)' }
 
@@ -513,19 +535,19 @@ function Invoke-CmdDoctor {
         $last = Get-Content -LiteralPath $LogFile -Tail 1
         if ($last -match '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})') {
             $age = $now - (ConvertTo-Epoch -Date ([datetime]::ParseExact($Matches[1], 'yyyy-MM-dd HH:mm:ss', $null)))
-            if ($age -le 3900) { Write-Check ok 'last tick' "$(Format-Duration $age) ago — the task is firing" }
-            else { Write-Check fail 'last tick' "$(Format-Duration $age) ago — expected one every hour" }
+            if ($age -le 3900) { Write-Check ok 'last tick' "$(Format-Duration $age) ago - the task is firing" }
+            else { Write-Check fail 'last tick' "$(Format-Duration $age) ago - expected one every hour" }
         } else {
             Write-Check warn 'last tick' 'could not parse log timestamp'
         }
     } else {
-        Write-Check warn 'last tick' 'no log yet — the task has not run'
+        Write-Check warn 'last tick' 'no log yet - the task has not run'
     }
 
     if ($state.WINDOW_END -gt 0) {
         Write-Check ok 'window tracked' ("{0} -> {1}" -f (Format-Epoch $state.WINDOW_START), (Format-Epoch $state.WINDOW_END))
     } else {
-        Write-Check warn 'window tracked' 'none yet — run ".\keepwarm.ps1 ping"'
+        Write-Check warn 'window tracked' 'none yet - run ".\keepwarm.ps1 ping"'
     }
 
     if ($task) {
@@ -543,6 +565,9 @@ function Invoke-CmdDoctor {
 }
 
 function Invoke-CmdInstall {
+    if (-not (Test-HasTaskCmdlets)) {
+        throw 'Task Scheduler cmdlets are unavailable. On macOS/Linux use the ./keepwarm script instead.'
+    }
     $bin = Resolve-ClaudeBin
     if (-not $bin) { throw "fix CLAUDE_BIN in $ConfigFile before installing" }
 
@@ -580,7 +605,7 @@ function Invoke-CmdInstall {
     $state = Get-KwState
     if ($state.WINDOW_END -le 0) {
         Write-Say ''
-        Write-Say 'No window recorded yet. Run ".\keepwarm.ps1 ping" to open the first one —'
+        Write-Say 'No window recorded yet. Run ".\keepwarm.ps1 ping" to open the first one -'
         Write-Say 'do it at the top of an hour you like, that sets your boundary phase.'
     }
 }
@@ -619,7 +644,7 @@ function Invoke-CmdConfig {
 
 function Show-Usage {
     Write-Say @"
-keepwarm $KeepwarmVersion — keep Claude Code's 5-hour usage window rolling
+keepwarm $KeepwarmVersion - keep Claude Code's 5-hour usage window rolling
 
   .\keepwarm.ps1 install          install the hourly scheduled task
   .\keepwarm.ps1 ping             open a window now; also re-phases boundaries

@@ -5,8 +5,8 @@
 **Stop waiting out your 5-hour window.**
 
 Claude Code's usage window only starts when *you* do — so idle hours buy you
-nothing. `keepwarm` keeps windows rolling around the clock for about a
-twentieth of a cent a day.
+nothing. `keepwarm` keeps windows rolling around the clock, using a few hundred
+tokens from the subscription you already pay for.
 
 [![CI](https://github.com/mamuncseru/claude-keepwarm/actions/workflows/ci.yml/badge.svg)](https://github.com/mamuncseru/claude-keepwarm/actions/workflows/ci.yml)
 [![docs](https://github.com/mamuncseru/claude-keepwarm/actions/workflows/docs.yml/badge.svg)](https://mamuncseru.github.io/claude-keepwarm/)
@@ -102,16 +102,28 @@ with `claude` and `/login`.
 
 ## Cost
 
+**It doesn't cost anything extra.** Pings draw from the usage your Claude
+subscription already includes - the same allowance your normal Claude Code
+sessions use. There's no separate bill, no card to add, nothing to enable.
+
 One ping, measured over three runs:
 
 ```
-input 167 (stable)  +  output 72–106  ≈ 240–270 tokens   ($0.0005–0.0007)
+input 167 (stable)  +  output 72-106  =  240-270 tokens
 ```
 
-At ~5 pings/day that's well under a cent. It stays that small because the ping
-replaces Claude Code's ~15k-token default system prompt, sends no tool schemas,
-and disables CLAUDE.md, skills, plugins, hooks and MCP. A plain `claude -p hi`
-costs roughly 60× more.
+At ~5 pings a day that's roughly **1,200 tokens** - a rounding error against any
+plan's allowance. For scale only: if you were paying pay-as-you-go API rates,
+those tokens would come to about a third of a cent a day, near $1 a year. On a
+subscription you pay none of that.
+
+It stays this small because the ping replaces Claude Code's ~15k-token default
+system prompt, sends no tool schemas, and disables CLAUDE.md, skills, plugins,
+hooks and MCP. A plain `claude -p hi` uses roughly 60x more.
+
+> **The one exception:** if you've pointed Claude Code at an `ANTHROPIC_API_KEY`
+> or enabled pay-as-you-go extra usage, those tokens are billed the usual way -
+> still around a third of a cent a day.
 
 ## Commands
 

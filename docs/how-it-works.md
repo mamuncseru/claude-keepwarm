@@ -82,11 +82,21 @@ hour later, and cost an hour of window in the process.
 
 ## Costs
 
+**Nothing extra.** Pings come out of the usage your Claude subscription already
+includes - the same allowance your interactive sessions use. There is no
+separate bill.
+
 One ping, measured over three runs with the exact command that ships:
 
 ```
-input 167 (stable)  +  output 72–106  ≈ 240–270 tokens   ($0.0005–0.0007)
+input 167 (stable)  +  output 72-106  =  240-270 tokens
 ```
+
+At ~5 pings a day that is roughly 1,200 tokens. For scale only: at
+pay-as-you-go API rates that would be about a third of a cent a day (near $1 a
+year) - which you do not pay on a subscription. If you have instead configured
+Claude Code with an `ANTHROPIC_API_KEY` or enabled extra usage, it bills
+normally at that rate.
 
 It stays that small because of four flags:
 

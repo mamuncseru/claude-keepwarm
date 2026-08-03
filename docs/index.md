@@ -10,7 +10,8 @@ hide:
 <p class="kw-tagline">
 Claude Code's usage window only starts when <em>you</em> do. Idle all night, and
 those hours buy you nothing. <strong>keepwarm</strong> keeps windows rolling
-around the clock for about a twentieth of a cent a day.
+around the clock, using a few hundred tokens from the subscription you already
+pay for.
 </p>
 
 <div class="kw-cta" markdown>
@@ -55,13 +56,13 @@ to the plan's natural ceiling of 24 ÷ 5 ≈ 4.8 — regardless of when you sit 
 </div>
 
 <div class="kw-stat" markdown>
-<span class="kw-num">$0.0005</span>
-<span class="kw-lab">cost per ping</span>
+<span class="kw-num">$0 extra</span>
+<span class="kw-lab">uses your existing subscription</span>
 </div>
 
 <div class="kw-stat" markdown>
-<span class="kw-num">~5/day</span>
-<span class="kw-lab">pings, well under a cent</span>
+<span class="kw-num">~1,200</span>
+<span class="kw-lab">tokens a day, all in</span>
 </div>
 
 <div class="kw-stat" markdown>
@@ -127,6 +128,17 @@ $ ./keepwarm doctor
 too.
 
 ## Honest notes
+
+!!! success "No extra charge - it uses the subscription you already have"
+
+    Pings consume a tiny slice of the usage your plan already includes. There is
+    **no separate bill and nothing to enable** - the same allowance your normal
+    Claude Code sessions draw on. Any dollar figure on this site is the
+    equivalent API value, shown purely for scale.
+
+    The one exception: if you've pointed Claude Code at an `ANTHROPIC_API_KEY` or
+    enabled pay-as-you-go extra usage, those tokens are billed the usual way -
+    around a third of a cent a day.
 
 !!! note "It doesn't raise your limits"
 

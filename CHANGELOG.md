@@ -16,6 +16,25 @@ versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
   `ping` exits `3` for this case.
 - `ping` and the error log now surface the CLI's own `result` message instead
   of making you read raw JSON to find out what happened.
+- **Corrected an inaccurate cost claim.** The README and site said "about a
+  twentieth of a cent a day"; the real figure at API rates is ~0.25-0.35 cents
+  (5-7x higher). Fixed everywhere.
+
+### Changed
+- Cost is now stated as what it is: **no extra charge**. Pings draw from the
+  usage a Claude subscription already includes, and any dollar figure is
+  labelled as the equivalent API value shown for scale. The one exception -
+  an `ANTHROPIC_API_KEY` or pay-as-you-go extra usage - is called out
+  explicitly, because readers were reasonably assuming a separate bill.
+- Docs site defaults to **light mode** for everyone instead of following the
+  visitor's OS setting, and the theme switch now shows "Night mode" / "Day
+  mode" as text rather than a bare icon.
+
+### Added
+- A release workflow: pushing a `v*` tag re-runs the Linux, macOS and Windows
+  suites and only then publishes a GitHub release, with notes taken from this
+  changelog. A release that publishes regardless of test results is just a tag
+  with extra steps.
 
 ## [1.2.1] — 2026-08-02
 

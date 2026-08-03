@@ -14,21 +14,22 @@ theme:
     text: Inter
     code: JetBrains Mono
   palette:
-    # Blue to match the figures; the toggle is the only chrome on the header.
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
+    # Light first and with no `media:` key, so day mode is the default for
+    # everyone rather than following the visitor's OS preference.
+    # `toggle.name` becomes the button's title attribute, which extra.css
+    # renders as visible text beside the icon.
+    - scheme: default
       primary: indigo
       accent: indigo
       toggle:
         icon: material/weather-night
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
+        name: Night mode
+    - scheme: slate
       primary: indigo
       accent: indigo
       toggle:
         icon: material/weather-sunny
-        name: Switch to light mode
+        name: Day mode
   features:
     - navigation.instant
     - navigation.top

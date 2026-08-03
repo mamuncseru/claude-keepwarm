@@ -109,3 +109,37 @@
 @media screen and (max-width: 44.9em) {
   .kw-hero h1 { font-size: 1.9rem; }
 }
+
+/* ------------------------------------------------- labelled theme toggle --- */
+/* Material ships an icon-only switch, which is easy to miss. Render the
+   toggle's title ("Night mode" / "Day mode") as visible text beside it.
+   Material only displays the label belonging to the active scheme, so exactly
+   one of these is on screen at a time. */
+
+.md-header__option label.md-header__button.md-icon::after {
+  content: attr(title);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  margin-left: 0.28rem;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.md-header__option label.md-header__button.md-icon {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  padding-right: 0.5rem;
+  border-radius: 999px;
+}
+
+.md-header__option label.md-header__button.md-icon svg {
+  vertical-align: middle;
+}
+
+/* Cramped headers: keep the icon, drop the words. */
+@media screen and (max-width: 59.9em) {
+  .md-header__option label.md-header__button.md-icon::after { content: none; }
+  .md-header__option label.md-header__button.md-icon { padding-right: 0; }
+}

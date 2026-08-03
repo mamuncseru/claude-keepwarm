@@ -1,0 +1,67 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # Re-run the suites against the tagged commit. A release that publishes
+  # regardless of test results is just a tag with extra steps.
+  verify:
+    name: verify the tagged commit
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./tests/run.sh
+
+  verify-windows:
+    name: verify on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - shell: powershell
+        run: .\tests\run.ps1
+
+  release:
+    name: publish release
+    needs: [verify, verify-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract this version's notes from the changelog
+        id: notes
+        run: |
+          python3 - "$GITHUB_REF_NAME" <<'EOF' > release-notes.md
+          import re, sys
+          tag = sys.argv[1]
+          version = tag.lstrip("v")
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          # Everything between this version's heading and the next one.
+          m = re.search(
+              r"^## \[%s\][^\n]*\n(.*?)(?=^## \[|\Z)" % re.escape(version),
+              text, re.S | re.M)
+          if not m:
+              print(f"See CHANGELOG.md for {version}.")
+          else:
+              print(m.group(1).strip())
+          EOF
+          echo "--- notes ---"; cat release-notes.md
+
+      - name: Create the GitHub release
+        env:
+          # gh is preinstalled on the runner; using it avoids a third-party action.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            --verify-tag

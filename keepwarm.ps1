@@ -39,7 +39,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$KeepwarmVersion = '1.2.2'
+$KeepwarmVersion = '1.0.0'
 $TaskName        = 'claude-keepwarm'
 
 # --------------------------------------------------------------------- paths --

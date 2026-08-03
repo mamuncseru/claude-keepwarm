@@ -39,7 +39,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$KeepwarmVersion = '1.2.1'
+$KeepwarmVersion = '1.2.2'
 $TaskName        = 'claude-keepwarm'
 
 # --------------------------------------------------------------------- paths --
@@ -57,6 +57,7 @@ $LogDir    = Join-Path $HomeDir 'logs'
 $StateFile = Join-Path $StateDir 'window.env'
 $LogFile   = Join-Path $LogDir  'keepwarm.log'
 $LockDir   = Join-Path $StateDir 'keepwarm.lock.d'
+$LastErrorFile = Join-Path $StateDir '.last-error'
 $ConfigFile = if ($env:KEEPWARM_CONFIG) { $env:KEEPWARM_CONFIG } else { Join-Path $HomeDir 'config.env' }
 
 New-Item -ItemType Directory -Force -Path $StateDir, $LogDir | Out-Null
@@ -142,6 +143,18 @@ function Write-KwLog {
 }
 
 function Write-Say { param([string]$Message = '') Write-Host $Message }
+
+# The CLI puts a human-readable explanation in the JSON "result" field. Pull it
+# out for messages a person will read; fall back to the raw head.
+function Get-ResultMessage {
+    param([string]$Text = '')
+    try {
+        $o = $Text | ConvertFrom-Json -ErrorAction Stop
+        if ($o.PSObject.Properties.Name -contains 'result' -and $o.result) { return [string]$o.result }
+    } catch { }
+    if ($Text -match '"result"\s*:\s*"([^"]*)"') { return $Matches[1] }
+    Format-OneLine -Text $Text -Max 200
+}
 
 # Collapse a payload to one log-friendly line.
 function Format-OneLine {
@@ -312,11 +325,22 @@ function Invoke-PingOnce {
         Write-KwLog "LIMITED  still inside a window; will retry next tick :: $(Format-OneLine -Text $raw -Max 300)"
         return 'limited'
     }
+    # Authentication failures are NOT transient: the session stays expired
+    # until a human signs in again, so they skip the retry loop entirely.
+    if ($raw -match '(?i)failed to authenticate|oauth session expired|authentication_error|invalid api key|please run /login|not logged in') {
+        $msg = Get-ResultMessage -Text $raw
+        Set-Content -LiteralPath $LastErrorFile -Value $msg -Encoding ASCII
+        Write-KwLog "AUTH     $msg"
+        return 'auth'
+    }
+
     if ($rc -ne 0 -or $raw -match '"is_error"\s*:\s*true') {
+        Set-Content -LiteralPath $LastErrorFile -Value (Get-ResultMessage -Text $raw) -Encoding ASCII
         Write-KwLog "ERROR    rc=$rc :: $(Format-OneLine -Text $raw -Max 1200)"
         return 'error'
     }
 
+    Remove-Item -LiteralPath $LastErrorFile -ErrorAction SilentlyContinue
     Write-KwLog "OK       $(Format-OneLine -Text $raw -Max 400)"
     return 'ok'
 }
@@ -335,7 +359,7 @@ function Invoke-Ping {
     $delay    = [int]$Config.PING_RETRY_DELAY
     for ($i = 1; $i -le $attempts; $i++) {
         $status = Invoke-PingOnce -Bin $bin
-        if ($status -eq 'ok' -or $status -eq 'limited') { return $status }
+        if ($status -eq 'ok' -or $status -eq 'limited' -or $status -eq 'auth') { return $status }
         if ($i -lt $attempts) {
             Write-KwLog "RETRY    attempt $i failed; retrying in ${delay}s"
             Start-Sleep -Seconds $delay
@@ -447,9 +471,22 @@ function Invoke-CmdPing {
             Write-Say 'still rate limited - you are inside an existing window. Nothing lost; try later.'
             return 2
         }
+        'auth' {
+            Set-KwState -State $state
+            $detail = (if (Test-Path -LiteralPath $LastErrorFile) { (Get-Content -LiteralPath $LastErrorFile -Raw).Trim() } else { '' })
+            Write-Say ''
+            Write-Say "not authenticated: $(if ($detail) { $detail } else { 'the CLI could not authenticate' })"
+            Write-Say ''
+            Write-Say 'Your Claude Code login has expired. Sign in again, then retry:'
+            Write-Say '    claude                  # then use /login'
+            Write-Say '    .\keepwarm.ps1 ping'
+            return 3
+        }
         default {
             Set-KwState -State $state
-            Write-Say 'ping failed. See: .\keepwarm.ps1 log'
+            $detail = (if (Test-Path -LiteralPath $LastErrorFile) { (Get-Content -LiteralPath $LastErrorFile -Raw).Trim() } else { '' })
+            Write-Say "ping failed: $(if ($detail) { $detail } else { 'see .\keepwarm.ps1 log' })"
+            Write-Say 'Full payload: .\keepwarm.ps1 log'
             return 1
         }
     }
@@ -548,6 +585,15 @@ function Invoke-CmdDoctor {
         Write-Check ok 'window tracked' ("{0} -> {1}" -f (Format-Epoch $state.WINDOW_START), (Format-Epoch $state.WINDOW_END))
     } else {
         Write-Check warn 'window tracked' 'none yet - run ".\keepwarm.ps1 ping"'
+    }
+
+    # Only reported when it actually happened - never claim auth is fine, since
+    # confirming that would cost a ping.
+    if ($state.LAST_STATUS -eq 'auth') {
+        $detail = (if (Test-Path -LiteralPath $LastErrorFile) { (Get-Content -LiteralPath $LastErrorFile -Raw).Trim() } else { '' })
+        Write-Check fail 'authentication' $(if ($detail) { $detail } else { 'last ping could not authenticate' })
+        Write-Say ''
+        Write-Say "  Sign in again: run 'claude', use /login, then '.\keepwarm.ps1 ping'"
     }
 
     if ($task) {

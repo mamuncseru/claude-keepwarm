@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] — 2026-08-02
+
+### Fixed
+- **An expired Claude Code login was retried three times over 40 seconds and
+  its one-line cause was buried in a 1200-character payload.** Reported from a
+  real Windows install. Authentication failures are now their own status:
+  never retried (an expired session does not become valid by waiting), logged
+  as a readable `AUTH` line, and surfaced by `ping` with the fix to run.
+  `doctor` reports it as a failing check until the next successful ping.
+  `ping` exits `3` for this case.
+- `ping` and the error log now surface the CLI's own `result` message instead
+  of making you read raw JSON to find out what happened.
+
 ## [1.2.1] — 2026-08-02
 
 ### Fixed
@@ -96,6 +109,7 @@ First public release.
   rather than `epoch % 3600`, which was wrong in half-hour timezones such as
   `Asia/Kolkata` and `Asia/Kathmandu`.
 
+[1.2.2]: https://github.com/mamuncseru/claude-keepwarm/releases/tag/v1.2.2
 [1.2.1]: https://github.com/mamuncseru/claude-keepwarm/releases/tag/v1.2.1
 [1.2.0]: https://github.com/mamuncseru/claude-keepwarm/releases/tag/v1.2.0
 [1.1.0]: https://github.com/mamuncseru/claude-keepwarm/releases/tag/v1.1.0

@@ -97,7 +97,8 @@ $ ./keepwarm doctor
 
 `doctor` exits non-zero when something's wrong, so it works as a health probe.
 In the log, `WAIT` means the tick ran and correctly spent nothing; `OK` means a
-window opened.
+window opened, and `AUTH` means your Claude Code login expired — sign in again
+with `claude` and `/login`.
 
 ## Cost
 
@@ -142,12 +143,12 @@ early — which shows up as a `LIMITED` line and a retry, not as breakage. Raise
 ## Development
 
 ```sh
-./tests/run.sh          # 18 tests — no network, no API calls, no real crontab
+./tests/run.sh          # 21 tests — no network, no API calls, no real crontab
 shellcheck -s bash keepwarm tests/run.sh
 ```
 
 ```powershell
-.\tests\run.ps1         # 15 tests, same coverage on the Windows port
+.\tests\run.ps1         # 16 tests, same coverage on the Windows port
 ```
 
 CI covers GNU vs BSD `date` (Linux + macOS), bash 3.2, Windows PowerShell 5.1

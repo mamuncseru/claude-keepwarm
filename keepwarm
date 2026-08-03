@@ -20,7 +20,7 @@
 #
 set -uo pipefail
 
-KEEPWARM_VERSION="1.2.1"
+KEEPWARM_VERSION="1.2.2"
 
 # Resolve our own directory, following symlinks so `ln -s keepwarm ~/bin/`
 # works. readlink -f is GNU-only, so walk the links manually.
@@ -81,6 +81,7 @@ STATE_FILE="$STATE_DIR/window.env"
 LOG_FILE="$LOG_DIR/keepwarm.log"
 LOCK_DIR="$STATE_DIR/keepwarm.lock.d"
 REF_FILE="$STATE_DIR/.boundary-ref"
+LAST_ERROR_FILE="$STATE_DIR/.last-error"
 
 WINDOW_SECONDS=$(( WINDOW_HOURS * 3600 ))
 SLACK_SECONDS=$(( SLACK_MINUTES * 60 ))
@@ -274,6 +275,15 @@ active_since_window_end() {
 # Collapse output to a single log-friendly line.
 oneline() { tr '\n\t' '  ' | tr -s ' ' | cut -c1-"${1:-1200}"; }
 
+# The CLI puts a human-readable explanation in the JSON "result" field. Pull it
+# out for messages a person will read; fall back to the raw head if the shape
+# is not what we expect.
+result_message() {
+    local msg
+    msg="$(sed -n 's/.*"result":"\([^"]*\)".*/\1/p' <<<"$1" | head -n 1)"
+    if [ -n "$msg" ]; then printf '%s' "$msg"; else oneline 200 <<<"$1"; fi
+}
+
 # One ping attempt. Echoes: ok | limited | error
 do_ping_once() {
     local out rc
@@ -307,14 +317,26 @@ do_ping_once() {
         return
     fi
 
+    # Authentication failures are NOT transient: the session stays expired until
+    # a human signs in again. Retrying burns 40s and logs the same line three
+    # times, so they get their own status and skip the retry loop.
+    if grep -qiE 'failed to authenticate|oauth session expired|authentication_error|invalid api key|please run /login|not logged in' <<<"$out"; then
+        printf '%s\n' "$(result_message "$out")" >"$LAST_ERROR_FILE"
+        log "AUTH     $(result_message "$out")"
+        printf 'auth'
+        return
+    fi
+
     if [ "$rc" -ne 0 ] || grep -q '"is_error":[[:space:]]*true' <<<"$out"; then
         # Log generously — a truncated payload hides the "result" field that
         # explains the failure, which is exactly what you need at 03:00.
+        printf '%s\n' "$(result_message "$out")" >"$LAST_ERROR_FILE"
         log "ERROR    rc=$rc :: $(oneline 1200 <<<"$out")"
         printf 'error'
         return
     fi
 
+    rm -f "$LAST_ERROR_FILE" 2>/dev/null || true
     log "OK       $(oneline 400 <<<"$out")"
     printf 'ok'
 }
@@ -338,7 +360,7 @@ do_ping() {
     while :; do
         status="$(do_ping_once)"
         case "$status" in
-            ok|limited) printf '%s' "$status"; return ;;
+            ok|limited|auth) printf '%s' "$status"; return ;;
         esac
         if [ "$attempt" -ge "$PING_ATTEMPTS" ]; then
             printf 'error'
@@ -436,9 +458,20 @@ cmd_ping() {
             say "still rate limited — you are inside an existing window. Nothing lost; try later."
             return 2
             ;;
+        auth)
+            save_state
+            say ""
+            say "not authenticated: $(cat "$LAST_ERROR_FILE" 2>/dev/null || printf 'the CLI could not authenticate')"
+            say ""
+            say "Your Claude Code login has expired. Sign in again, then retry:"
+            say "    claude          # then use /login"
+            say "    keepwarm ping"
+            return 3
+            ;;
         *)
             save_state
-            say "ping failed. See: keepwarm log"
+            say "ping failed: $(cat "$LAST_ERROR_FILE" 2>/dev/null || printf 'see keepwarm log')"
+            say "Full payload: keepwarm log"
             return 1
             ;;
     esac
@@ -545,6 +578,12 @@ cmd_doctor() {
         check ok "window tracked" "$(fmt "$WINDOW_START") -> $(fmt "$WINDOW_END")"
     else
         check warn "window tracked" "none yet — run 'keepwarm ping'"
+    fi
+
+    # Only reported when it actually happened — never claim auth is fine, since
+    # confirming that would cost a ping.
+    if [ "$LAST_STATUS" = "auth" ]; then
+        check fail "authentication" "$(cat "$LAST_ERROR_FILE" 2>/dev/null || printf 'last ping could not authenticate')"
     fi
 
     next_tick="$(tick_at_or_after "$now")"

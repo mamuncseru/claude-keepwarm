@@ -44,6 +44,8 @@ case "${STUB_MODE:-ok}" in
     printf 'Claude usage limit reached. Your limit will reset at 3pm.\n'; exit 0 ;;
   error)
     printf '{"is_error":true,"result":"stub failure","total_cost_usd":0}\n'; exit 1 ;;
+  auth)
+    printf '%s\n' '{"is_error":true,"duration_api_ms":0,"stop_reason":"stop_sequence","total_cost_usd":0,"terminal_reason":"api_error","result":"Failed to authenticate: OAuth session expired and could not be refreshed","type":"result"}'; exit 1 ;;
   flaky)
     # fail the first attempt, succeed afterwards
     if [ "$(wc -l <"${STUB_LOG:-/dev/null}" | tr -d ' ')" -le 1 ]; then
@@ -195,6 +197,37 @@ test_error_is_retried_then_recorded() {
     assert_eq "2" "$(calls)" "error retried up to PING_ATTEMPTS"
     assert_eq "error" "$(state_get LAST_STATUS)" "records error"
     assert_eq "$before" "$(state_get WINDOW_END)" "window NOT advanced on error"
+}
+
+# Reported from a real Windows install: an expired login was retried three
+# times over 40s and buried its one-line cause in a 1200-char payload.
+test_auth_failure_is_not_retried() {
+    write_state "$(hours_ago_boundary 6)"
+    local before
+    before="$(state_get WINDOW_END)"
+    STUB_MODE="auth" "$KW" run >/dev/null 2>&1
+    assert_eq "1" "$(calls)" "auth failure is NOT retried - it is not transient"
+    assert_eq "auth" "$(state_get LAST_STATUS)" "records auth"
+    assert_eq "$before" "$(state_get WINDOW_END)" "window NOT advanced on auth failure"
+    assert_match "$(logtext)" "AUTH +Failed to authenticate" "logs the readable cause, not just the blob"
+}
+
+test_auth_failure_gives_actionable_advice() {
+    local out
+    out="$(STUB_MODE="auth" "$KW" ping 2>&1)"
+    assert_match "$out" "not authenticated" "says what went wrong"
+    assert_match "$out" "OAuth session expired" "surfaces the CLI's own message"
+    assert_match "$out" "/login" "tells the user how to fix it"
+}
+
+test_doctor_flags_expired_auth() {
+    STUB_MODE="auth" "$KW" ping >/dev/null 2>&1
+    local out
+    out="$("$KW" doctor 2>&1)"
+    assert_match "$out" "authentication" "doctor surfaces the auth failure"
+    if "$KW" doctor >/dev/null 2>&1; then
+        fail_test "doctor should exit non-zero when authentication failed"
+    fi
 }
 
 test_transient_error_recovers_within_one_run() {

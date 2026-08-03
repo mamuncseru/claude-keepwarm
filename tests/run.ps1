@@ -56,6 +56,10 @@ if "%STUB_MODE%"=="error" (
   echo {"is_error":true,"result":"stub failure"}
   exit /b 1
 )
+if "%STUB_MODE%"=="auth" (
+  echo {"is_error":true,"duration_api_ms":0,"stop_reason":"stop_sequence","total_cost_usd":0,"terminal_reason":"api_error","result":"Failed to authenticate: OAuth session expired and could not be refreshed","type":"result"}
+  exit /b 1
+)
 if "%STUB_MODE%"=="flaky" (
   if not exist "%STUB_FLAG%" (
     >"%STUB_FLAG%" echo x
@@ -77,6 +81,7 @@ printf 'call\n' >>"$STUB_LOG"
 case "${STUB_MODE:-ok}" in
   limited) printf 'Claude usage limit reached. Your limit will reset at 3pm.\n'; exit 0 ;;
   error)   printf '{"is_error":true,"result":"stub failure"}\n'; exit 1 ;;
+  auth)    printf '%s\n' '{"is_error":true,"duration_api_ms":0,"stop_reason":"stop_sequence","total_cost_usd":0,"terminal_reason":"api_error","result":"Failed to authenticate: OAuth session expired and could not be refreshed","type":"result"}'; exit 1 ;;
   flaky)
     if [ ! -f "$STUB_FLAG" ]; then
       printf 'x' >"$STUB_FLAG"
@@ -243,6 +248,19 @@ Invoke-Test 'error_is_retried_then_recorded' {
     Assert-Equal 2 (Get-Calls) 'error retried up to PING_ATTEMPTS'
     Assert-Equal 'error' (Get-StateValue 'LAST_STATUS') 'records error'
     Assert-Equal $before (Get-StateValue 'WINDOW_END') 'window NOT advanced on error'
+}
+
+# Reported from a real Windows install: an expired login was retried three
+# times over 40s and buried its one-line cause in a 1200-char payload.
+Invoke-Test 'auth_failure_is_not_retried' {
+    Set-StateWindow (Get-HoursAgoBoundary 6)
+    $before = Get-StateValue 'WINDOW_END'
+    $env:STUB_MODE = 'auth'
+    Invoke-Kw @('run') | Out-Null
+    Assert-Equal 1 (Get-Calls) 'auth failure is NOT retried - it is not transient'
+    Assert-Equal 'auth' (Get-StateValue 'LAST_STATUS') 'records auth'
+    Assert-Equal $before (Get-StateValue 'WINDOW_END') 'window NOT advanced on auth failure'
+    Assert-Match (Get-LogText) 'AUTH\s+Failed to authenticate' 'logs the readable cause'
 }
 
 Invoke-Test 'transient_error_recovers_within_one_run' {

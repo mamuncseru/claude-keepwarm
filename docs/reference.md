@@ -25,6 +25,7 @@ On Windows, every command is identical with `.\keepwarm.ps1` in place of
 | `0` | Success |
 | `1` | Failure — `doctor` found a failing check, or `ping` errored |
 | `2` | `ping` was rate-limited (you're inside a live window; nothing lost) |
+| `3` | `ping` could not authenticate - sign in again |
 
 ## Log lines
 
@@ -102,6 +103,20 @@ WSL and native Windows keeps your window.
     `SLACK_MINUTES` to 5. Nothing is lost when this happens — state is left
     untouched and the next tick retries.
 
+??? question "`not authenticated` / `Failed to authenticate: OAuth session expired`"
+
+    Your Claude Code login has expired. keepwarm can't refresh it for you - it
+    holds no credentials of its own. Sign in again and retry:
+
+    ```sh
+    claude          # then use /login
+    keepwarm ping
+    ```
+
+    Auth failures are deliberately **not** retried: an expired session stays
+    expired until a human signs in, so retrying just burns time and fills the
+    log. `doctor` reports it as a failing check until the next successful ping.
+
 ??? question "`claude binary not found`"
 
     Auto-detection didn't find the CLI. Set `CLAUDE_BIN` in `config.env` to the
@@ -122,13 +137,13 @@ WSL and native Windows keeps your window.
 ## Development
 
 ```sh
-./tests/run.sh          # 18 tests — no network, no API calls, no real crontab
+./tests/run.sh          # 21 tests — no network, no API calls, no real crontab
 ./tests/run.sh lock     # filter by name
 shellcheck -s bash keepwarm tests/run.sh
 ```
 
 ```powershell
-.\tests\run.ps1         # 15 tests, same coverage on the Windows port
+.\tests\run.ps1         # 16 tests, same coverage on the Windows port
 ```
 
 Tests run in a throwaway sandbox with a stub `claude` and a fake `crontab`, so
